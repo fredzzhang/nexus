@@ -80,24 +80,26 @@ def parse_s3_uri(s3_uri):
     return bucket, prefix
 
 
-def monitor_bucket(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_time=None, download_dir=DEFAULT_DOWNLOAD_DIR, interval=DEFAULT_INTERVAL):
+def monitor_bucket(bucket_name, prefix='', pattern=DEFAULT_PATTERN, lookback=DEFAULT_LOOKBACK, download_dir=DEFAULT_DOWNLOAD_DIR, interval=DEFAULT_INTERVAL):
     """Continuously monitor an S3 bucket and download new matching files at regular intervals.
 
     Args:
         bucket_name: Name of the S3 bucket.
         prefix: S3 key prefix to filter objects.
         pattern: Glob pattern to match filenames.
-        cutoff_time: Only download files modified after this datetime (UTC).
+        lookback: Only download files created within the last N hours.
         download_dir: Local directory to save downloaded files.
         interval: Seconds between each check.
     """
     print(f"Monitoring s3://{bucket_name}/{prefix}")
     print(f"File pattern: {pattern}")
+    print(f"Lookback: {lookback} hours")
     print(f"Download directory: {download_dir}")
     print(f"Check interval: {interval} seconds")
 
     while True:
         try:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=lookback)
             count = download_new_files(bucket_name, prefix, pattern, cutoff_time, download_dir)
             if count > 0:
                 print(f"Downloaded {count} new files at {datetime.now()}")
@@ -125,6 +127,4 @@ if __name__ == "__main__":
         exit(1)
 
     bucket_name, prefix = parse_s3_uri(args.s3_uri)
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=args.lookback)
-
-    monitor_bucket(bucket_name, prefix, args.pattern, cutoff_time, args.download_dir, args.interval)
+    monitor_bucket(bucket_name, prefix, args.pattern, args.lookback, args.download_dir, args.interval)
