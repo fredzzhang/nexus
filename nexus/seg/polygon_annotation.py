@@ -94,23 +94,8 @@ class PolygonAnnotationWithReference:
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        self.ref_container = tk.Frame(self.canvas_frame)
-        self.ref_container.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-        
-        ref_nav = tk.Frame(self.ref_container)
-        ref_nav.pack(side=tk.TOP, fill=tk.X)
-        tk.Button(ref_nav, text="< Prev Ref", command=self.prev_ref).pack(side=tk.LEFT)
-        self.ref_label = tk.Label(ref_nav, text="No reference")
-        self.ref_label.pack(side=tk.LEFT, padx=10)
-        tk.Button(ref_nav, text="Next Ref >", command=self.next_ref).pack(side=tk.LEFT)
-        
-        self.ref_canvas = tk.Canvas(self.ref_container)
-        self.ref_canvas.pack(fill=tk.BOTH, expand=True)
-        
-        self.ref_images = []
+        self.ref_canvases = []
         self.ref_photos = []
-        self.ref_names = []
-        self.current_ref_index = 0
         
         self.btn_frame = tk.Frame(root)
         self.btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
@@ -244,19 +229,19 @@ class PolygonAnnotationWithReference:
                 break
     
     def load_reference_image(self, main_path):
+        for c in self.ref_canvases:
+            c.destroy()
+        self.ref_canvases = []
         self.ref_photos = []
-        self.ref_names = []
-        self.current_ref_index = 0
 
         ref_patterns = self._name_format[1:] if self._name_format and len(self._name_format) > 1 else []
         if not ref_patterns:
-            self.ref_canvas.delete("all")
-            self.ref_label.config(text="No reference")
             return
 
         basename = os.path.basename(main_path)
         ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
         stem = self._extract_stem(basename, ann_prefix, ann_suffix)
+        target_height = int(self.image.height * self.scale)
 
         for pattern in ref_patterns:
             ref_prefix, ref_suffix = self._parse_pattern(pattern)
@@ -265,45 +250,23 @@ class PolygonAnnotationWithReference:
 
             if os.path.exists(ref_path):
                 ref_image = Image.open(ref_path)
-                scale = min(self.max_width / ref_image.width,
-                            self.max_height / ref_image.height, 1.0)
-                new_size = (int(ref_image.width * scale),
-                            int(ref_image.height * scale))
+                scale = target_height / ref_image.height
+                new_size = (int(ref_image.width * scale), target_height)
                 ref_image = ref_image.resize(new_size, Image.LANCZOS)
                 photo = ImageTk.PhotoImage(ref_image)
             else:
-                new_size = (int(self.image.width * self.scale),
-                            int(self.image.height * self.scale))
+                new_size = (int(self.image.width * self.scale), target_height)
                 placeholder = Image.new('RGB', new_size, 'gray')
                 draw = ImageDraw.Draw(placeholder)
                 draw.text((placeholder.width // 2 - 80, placeholder.height // 2),
                           f"No ref: {ref_name}", fill='white')
                 photo = ImageTk.PhotoImage(placeholder)
             self.ref_photos.append(photo)
-            self.ref_names.append(ref_name)
 
-        self.show_current_ref()
-
-    def show_current_ref(self):
-        self.ref_canvas.delete("all")
-        if not self.ref_photos:
-            self.ref_label.config(text="No reference")
-            return
-        photo = self.ref_photos[self.current_ref_index]
-        self.ref_canvas.config(width=photo.width(), height=photo.height())
-        self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-        name = self.ref_names[self.current_ref_index]
-        self.ref_label.config(text=f"Ref {self.current_ref_index + 1}/{len(self.ref_photos)}: {name}")
-
-    def prev_ref(self):
-        if self.ref_photos and self.current_ref_index > 0:
-            self.current_ref_index -= 1
-            self.show_current_ref()
-
-    def next_ref(self):
-        if self.ref_photos and self.current_ref_index < len(self.ref_photos) - 1:
-            self.current_ref_index += 1
-            self.show_current_ref()
+            canvas = tk.Canvas(self.canvas_frame, width=new_size[0], height=new_size[1])
+            canvas.pack(side=tk.LEFT, fill=tk.Y)
+            canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+            self.ref_canvases.append(canvas)
     
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -958,6 +921,7 @@ def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin
     """
     root = tk.Tk()
     root.geometry(res)
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
     app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format)
     root.mainloop()
 
