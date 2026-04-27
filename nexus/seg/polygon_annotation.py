@@ -1,0 +1,861 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
+import json
+import os
+import random
+import string
+
+BASE_DATA = {
+    "project": {"pname": ""},
+    "attribute": {
+        "1": {
+            "options": {
+                "0": "",
+                "400": "Strawberry - Package",
+                "401": "Strawberry - Decay",
+                "402": "Strawberry - Overripe/Wet bruising",
+                "403": "Strawberry - Mould",
+                "404": "Strawberry - Condensation",
+                "405": "Strawberry - BadInstance",
+                "406": "Strawberry - Instance Fully Visible",
+                "407": "Strawberry - Instance Partially Visible"
+            }
+        }
+    },
+    "file": {},
+    "metadata": {}
+}
+
+class PolygonAnnotationWithReference:
+    def __init__(self, root, custom_classes=None, asin="strawberry"):
+        self.root = root
+        self.root.title("Polygon Annotation Tool")
+        self._custom_classes = custom_classes
+        self._asin = asin
+        
+        self.top_frame = tk.Frame(root)
+        self.top_frame.pack(side=tk.TOP, fill=tk.X)
+        
+        tk.Button(self.top_frame, text="Load Directory", command=self.load_directory).pack(side=tk.LEFT)
+        tk.Button(self.top_frame, text="<", command=self.prev_image).pack(side=tk.LEFT)
+        tk.Button(self.top_frame, text=">", command=self.next_image).pack(side=tk.LEFT)
+        
+        self.file_dropdown = ttk.Combobox(self.top_frame, state="readonly", width=40)
+        self.file_dropdown.pack(side=tk.LEFT, padx=10)
+        self.file_dropdown.bind("<<ComboboxSelected>>", self.on_file_selected)
+        
+        self.filename_label = tk.Label(self.top_frame, text="No image loaded")
+        self.filename_label.pack(side=tk.LEFT, padx=10)
+        
+        self.canvas_frame = tk.Frame(root)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.ref_canvas = tk.Canvas(self.canvas_frame)
+        self.ref_canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        self.btn_frame = tk.Frame(root)
+        self.btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        control_frame = tk.Frame(self.btn_frame)
+        control_frame.pack(side=tk.TOP, fill=tk.X)
+        
+        tk.Button(control_frame, text="Clear Polygon", command=self.clear_current).pack(side=tk.LEFT)
+        self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF", command=self.toggle_edit_mode)
+        self.edit_mode_btn.pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
+        tk.Label(control_frame, text="Class:").pack(side=tk.LEFT)
+        self.class_dropdown = ttk.Combobox(control_frame, state="readonly", width=15)
+        self.class_dropdown.pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
+        
+        self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
+        self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
+        self.class_buttons_frame = tk.Frame(self.class_buttons_canvas)
+        self.class_buttons_canvas.create_window(0, 0, window=self.class_buttons_frame, anchor=tk.NW)
+        self.class_buttons_canvas.bind('<Configure>', self.on_canvas_configure)
+        
+        self.class_buttons = {}
+        
+        self.image = None
+        self.photo = None
+        self.ref_photo = None
+        self.current_polygon = []
+        self.polygons = []
+        self.polygon_items = []
+        self.image_files = []
+        self.current_index = 0
+        self.directory = None
+        self.scale = 1.0
+        self.max_width = 1200
+        self.max_height = 800
+        self.all_annotations = {}
+        self.classes = {}
+        self.polygon_labels = {}
+        self.colors = ['green', 'blue', 'red', 'yellow', 'purple', 'orange', 'cyan', 'magenta']
+        self.selected_class = None
+        self.loaded_data = None
+        self.edit_mode = False
+        self.selected_polygon_idx = None
+        self.selected_vertex_idx = None
+        self.vertex_handles = []
+        
+        self.canvas.bind("<Button-1>", self.add_point)
+        self.canvas.bind("<Button-3>", self.close_polygon)
+        self.canvas.bind("<Double-Button-1>", self.delete_polygon)
+        
+        self.load_base_classes()
+    
+    def load_directory(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.directory = directory
+            all_files = [f for f in os.listdir(directory)
+                        if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            self.image_files = [os.path.join(directory, f) for f in all_files
+                               if 'ref' not in f]
+            self.image_files.sort()
+            if self.image_files:
+                filenames = [os.path.basename(f) for f in self.image_files]
+                self.file_dropdown['values'] = filenames
+                self.all_annotations = {}
+                self.current_index = 0
+                self.load_current_image()
+            else:
+                messagebox.showwarning("No Images", "No images found in directory")
+    
+    def load_current_image(self):
+        if self.image_files:
+            self.save_current_annotations()
+            
+            path = self.image_files[self.current_index]
+            self.image = Image.open(path)
+            
+            self.root.update_idletasks()
+            
+            self.scale = min(self.max_width / self.image.width, 
+                           self.max_height / self.image.height, 1.0)
+            
+            new_size = (int(self.image.width * self.scale), 
+                       int(self.image.height * self.scale))
+            display_image = self.image.resize(new_size, Image.LANCZOS)
+            
+            self.photo = ImageTk.PhotoImage(display_image)
+            self.canvas.delete("all")
+            self.canvas.config(width=new_size[0], height=new_size[1])
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+            self.image_path = path
+            self.filename_label.config(text=f"{os.path.basename(path)} ({self.current_index + 1}/{len(self.image_files)})")
+            self.file_dropdown.set(os.path.basename(path))
+            self.current_polygon = []
+            
+            self.load_reference_image(path)
+            self.restore_annotations()
+    
+    def prev_image(self):
+        if self.image_files and self.current_index > 0:
+            self.current_index -= 1
+            self.load_current_image()
+    
+    def next_image(self):
+        if self.image_files and self.current_index < len(self.image_files) - 1:
+            self.current_index += 1
+            self.load_current_image()
+    
+    def on_file_selected(self, event):
+        selected = self.file_dropdown.get()
+        for i, path in enumerate(self.image_files):
+            if os.path.basename(path) == selected:
+                self.current_index = i
+                self.load_current_image()
+                break
+    
+    def load_reference_image(self, main_path):
+        basename = os.path.basename(main_path)
+        name, ext = os.path.splitext(basename)
+        parts = name.split('_')
+        
+        # Search for a file with 'ref' as a segment that matches other parts
+        ref_path = None
+        for fname in os.listdir(self.directory):
+            if fname.lower().endswith(ext.lower()) and 'ref' in fname:
+                fname_parts = os.path.splitext(fname)[0].split('_')
+                if 'ref' in fname_parts:
+                    # Remove 'ref' and check if remaining parts match
+                    fname_parts_no_ref = [p for p in fname_parts if p != 'ref']
+                    if fname_parts_no_ref == parts:
+                        ref_path = os.path.join(self.directory, fname)
+                        break
+        
+        self.ref_canvas.delete("all")
+        
+        if ref_path and os.path.exists(ref_path):
+            ref_image = Image.open(ref_path)
+
+            scale = min(self.max_width / ref_image.width, 
+                    self.max_height / ref_image.height, 1.0)
+
+            new_size = (int(ref_image.width * scale), 
+                       int(ref_image.height * scale))
+            ref_image = ref_image.resize(new_size, Image.LANCZOS)
+            self.ref_photo = ImageTk.PhotoImage(ref_image)
+            self.ref_canvas.config(width=new_size[0], height=new_size[1])
+            self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=self.ref_photo)
+        else:
+            new_size = (int(self.image.width * self.scale), 
+                       int(self.image.height * self.scale))
+            placeholder = Image.new('RGB', new_size, 'gray')
+            draw = ImageDraw.Draw(placeholder)
+            draw.text((placeholder.width//2 - 80, placeholder.height//2), 
+                     "No reference image", fill='white')
+            self.ref_photo = ImageTk.PhotoImage(placeholder)
+            self.ref_canvas.config(width=new_size[0], height=new_size[1])
+            self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=self.ref_photo)
+    
+    def toggle_edit_mode(self):
+        self.edit_mode = not self.edit_mode
+        if self.edit_mode:
+            self.edit_mode_btn.config(text="Edit Mode: ON", relief=tk.SUNKEN)
+            self.clear_current()
+        else:
+            self.edit_mode_btn.config(text="Edit Mode: OFF", relief=tk.RAISED)
+            self.deselect_polygon()
+            # Save and reload to ensure consistency
+            self.save_current_annotations()
+            self.restore_annotations()
+    
+    def select_polygon_for_edit(self, x, y):
+        for i, polygon in enumerate(self.polygons):
+            if self.point_in_polygon(x, y, polygon):
+                self.selected_polygon_idx = i
+                self.show_vertex_handles()
+                return True
+        return False
+    
+    def show_vertex_handles(self):
+        self.canvas.delete("vertex_handle")
+        self.vertex_handles = []
+        if self.selected_polygon_idx is not None:
+            polygon = self.polygons[self.selected_polygon_idx]
+            for i, (x, y) in enumerate(polygon):
+                handle = self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="yellow", outline="black", tags="vertex_handle")
+                self.vertex_handles.append(handle)
+    
+    def deselect_polygon(self):
+        self.selected_polygon_idx = None
+        self.selected_vertex_idx = None
+        self.canvas.delete("vertex_handle")
+        self.vertex_handles = []
+    
+    def find_vertex_at(self, x, y):
+        if self.selected_polygon_idx is not None:
+            polygon = self.polygons[self.selected_polygon_idx]
+            for i, (vx, vy) in enumerate(polygon):
+                if abs(x - vx) < 8 and abs(y - vy) < 8:
+                    return i
+        return None
+    
+    def add_point(self, event):
+        if event.widget != self.canvas:
+            return
+        x, y = event.x, event.y
+        
+        if self.edit_mode:
+            # Check if clicking on a vertex
+            vertex_idx = self.find_vertex_at(x, y)
+            if vertex_idx is not None:
+                self.selected_vertex_idx = vertex_idx
+                self.canvas.bind("<B1-Motion>", self.drag_vertex)
+                self.canvas.bind("<ButtonRelease-1>", self.release_vertex)
+            elif self.selected_polygon_idx is None:
+                # Select polygon
+                self.select_polygon_for_edit(x, y)
+            return
+        
+        if len(self.current_polygon) > 2:
+            x0, y0 = self.current_polygon[0]
+            distance = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+            if distance < 10:
+                self.close_polygon(event)
+                return
+        
+        self.current_polygon.append((x, y))
+        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="red", tags="temp")
+        
+        if len(self.current_polygon) > 1:
+            x1, y1 = self.current_polygon[-2]
+            self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
+    
+    def drag_vertex(self, event):
+        if self.selected_polygon_idx is not None and self.selected_vertex_idx is not None:
+            x, y = event.x, event.y
+            self.polygons[self.selected_polygon_idx][self.selected_vertex_idx] = (x, y)
+            self.redraw_polygon(self.selected_polygon_idx)
+            self.show_vertex_handles()
+    
+    def release_vertex(self, event):
+        self.selected_vertex_idx = None
+        self.canvas.unbind("<B1-Motion>")
+        self.canvas.unbind("<ButtonRelease-1>")
+    
+    def redraw_polygon(self, poly_idx):
+        if poly_idx < len(self.polygon_items):
+            for item_id in self.polygon_items[poly_idx]:
+                self.canvas.delete(item_id)
+            
+            polygon = self.polygons[poly_idx]
+            poly_key = (self.image_path, poly_idx)
+            class_idx = self.polygon_labels.get(poly_key)
+            if class_idx:
+                color = self.colors[int(class_idx) % len(self.colors)]
+            else:
+                color = 'green'
+            
+            flat_coords = [coord for point in polygon for coord in point]
+            poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
+            
+            x1, y1 = polygon[-1]
+            x2, y2 = polygon[0]
+            line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
+            
+            self.polygon_items[poly_idx] = [line_id, poly_id]
+    
+    def close_polygon(self, event):
+        if event.widget != self.canvas:
+            return
+        if len(self.current_polygon) > 2:
+            poly_idx = len(self.polygons)
+            self.polygons.append(self.current_polygon[:])
+            
+            if self.selected_class and self.selected_class in self.classes:
+                class_idx = self.classes[self.selected_class]
+                color = self.colors[int(class_idx) % len(self.colors)]
+            else:
+                class_idx = None
+                color = 'green'
+            
+            poly_key = (self.image_path, poly_idx)
+            self.polygon_labels[poly_key] = class_idx
+            
+            x1, y1 = self.current_polygon[-1]
+            x2, y2 = self.current_polygon[0]
+            line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
+            
+            flat_coords = [coord for point in self.current_polygon for coord in point]
+            poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
+            
+            self.polygon_items.append([line_id, poly_id])
+            
+            self.canvas.delete("temp")
+            self.current_polygon = []
+    
+    def clear_current(self):
+        self.canvas.delete("temp")
+        self.current_polygon = []
+    
+    def delete_polygon(self, event):
+        if event.widget != self.canvas:
+            return
+        x, y = event.x, event.y
+        
+        delete_idx = None
+        
+        if self.edit_mode and self.selected_polygon_idx is not None:
+            delete_idx = self.selected_polygon_idx
+            self.deselect_polygon()
+        else:
+            for i, polygon in enumerate(self.polygons):
+                if self.point_in_polygon(x, y, polygon):
+                    delete_idx = i
+                    break
+        
+        if delete_idx is not None:
+            del self.polygons[delete_idx]
+            del self.polygon_items[delete_idx]
+            
+            new_labels = {}
+            for (path, idx), class_idx in self.polygon_labels.items():
+                if path == self.image_path:
+                    if idx < delete_idx:
+                        new_labels[(path, idx)] = class_idx
+                    elif idx > delete_idx:
+                        new_labels[(path, idx - 1)] = class_idx
+                else:
+                    new_labels[(path, idx)] = class_idx
+            self.polygon_labels = new_labels
+            
+            self.save_current_annotations()
+            self.restore_annotations()
+    
+    def point_in_polygon(self, x, y, polygon):
+        n = len(polygon)
+        inside = False
+        x1, y1 = polygon[0]
+        for i in range(1, n + 1):
+            x2, y2 = polygon[i % n]
+            if y > min(y1, y2) and y <= max(y1, y2) and x <= max(x1, x2):
+                if y1 != y2:
+                    xinters = (y - y1) * (x2 - x1) / (y2 - y1) + x1
+                if x1 == x2 or x <= xinters:
+                    inside = not inside
+            x1, y1 = x2, y2
+        return inside
+    
+    def save_current_annotations(self):
+        if hasattr(self, 'image_path') and self.polygons:
+            original_polygons = []
+            new_labels = {}
+            new_idx = 0
+            for old_idx, polygon in enumerate(self.polygons):
+                if len(polygon) < 3:
+                    continue
+                original_poly = [(x / self.scale, y / self.scale) for x, y in polygon]
+                original_polygons.append(original_poly)
+                old_key = (self.image_path, old_idx)
+                if old_key in self.polygon_labels:
+                    new_labels[(self.image_path, new_idx)] = self.polygon_labels[old_key]
+                new_idx += 1
+            self.all_annotations[self.image_path] = original_polygons
+            for key in list(self.polygon_labels.keys()):
+                if key[0] == self.image_path:
+                    del self.polygon_labels[key]
+            self.polygon_labels.update(new_labels)
+        elif hasattr(self, 'image_path'):
+            self.all_annotations[self.image_path] = []
+    
+    def restore_annotations(self):
+        self.canvas.delete("polygon")
+        self.canvas.delete("vertex_handle")
+        self.polygons = []
+        self.polygon_items = []
+        
+        if self.image_path in self.all_annotations:
+            for poly_idx, original_polygon in enumerate(self.all_annotations[self.image_path]):
+                display_polygon = [(x * self.scale, y * self.scale) for x, y in original_polygon]
+                self.polygons.append(display_polygon)
+                
+                poly_key = (self.image_path, poly_idx)
+                class_idx = self.polygon_labels.get(poly_key)
+                if class_idx:
+                    color = self.colors[int(class_idx) % len(self.colors)]
+                else:
+                    color = 'green'
+                
+                flat_coords = [coord for point in display_polygon for coord in point]
+                poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
+                
+                x1, y1 = display_polygon[-1]
+                x2, y2 = display_polygon[0]
+                line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
+                
+                self.polygon_items.append([line_id, poly_id])
+    
+    def select_class(self, class_name):
+        self.selected_class = class_name
+        self.class_dropdown.set(class_name)
+        for name, btn in self.class_buttons.items():
+            if name == class_name:
+                btn.config(relief=tk.SUNKEN)
+            else:
+                btn.config(relief=tk.RAISED)
+        
+        # If in edit mode and polygon is selected, change its class
+        if self.edit_mode and self.selected_polygon_idx is not None:
+            if class_name in self.classes:
+                class_idx = self.classes[class_name]
+                poly_key = (self.image_path, self.selected_polygon_idx)
+                self.polygon_labels[poly_key] = class_idx
+                self.redraw_polygon(self.selected_polygon_idx)
+                self.show_vertex_handles()
+    
+    def on_canvas_configure(self, event):
+        self.reflow_class_buttons()
+    
+    def reflow_class_buttons(self):
+        if not self.class_buttons:
+            return
+        
+        canvas_width = self.class_buttons_canvas.winfo_width()
+        if canvas_width <= 1:
+            return
+        
+        for widget in self.class_buttons_frame.winfo_children():
+            widget.grid_forget()
+        
+        x, row, col = 0, 0, 0
+        for name, btn in self.class_buttons.items():
+            btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            self.class_buttons_frame.update_idletasks()
+            btn_width = btn.winfo_width()
+            x += btn_width + 4
+            
+            if x > canvas_width - 20 and col > 0:
+                row += 1
+                col = 0
+                x = btn_width + 4
+                btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            else:
+                col += 1
+        
+        self.class_buttons_frame.update_idletasks()
+        self.class_buttons_canvas.config(height=min(self.class_buttons_frame.winfo_height() + 10, 150))
+    
+    def update_class_buttons(self):
+        for widget in self.class_buttons_frame.winfo_children():
+            widget.destroy()
+        self.class_buttons.clear()
+        
+        for name, idx in self.classes.items():
+            color = self.colors[int(idx) % len(self.colors)]
+            btn = tk.Button(self.class_buttons_frame, text=name, bg=color, 
+                          activebackground=color, highlightbackground=color,
+                          command=lambda n=name: self.select_class(n))
+            self.class_buttons[name] = btn
+        
+        self.root.after(100, self.reflow_class_buttons)
+    
+    def load_base_classes(self):
+        import copy
+        data = copy.deepcopy(BASE_DATA)
+        base_options = data["attribute"]["1"]["options"]
+
+        if self._custom_classes:
+            collisions = set(self._custom_classes.keys()) & set(base_options.keys())
+            if collisions:
+                messagebox.showerror(
+                    "Index Collision",
+                    f"Custom class indices collide with base data: {collisions}"
+                )
+                return
+            for idx, name in self._custom_classes.items():
+                base_options[idx] = name
+
+        all_classes = {v: k for k, v in base_options.items()}
+
+        if self._asin:
+            produce_lower = self._asin.lower()
+            self.classes = {name: idx for name, idx in all_classes.items()
+                           if name.lower().startswith(produce_lower + " - ")}
+        else:
+            produce_name = self.prompt_produce_name()
+            if produce_name:
+                produce_lower = produce_name.lower()
+                self.classes = {name: idx for name, idx in all_classes.items()
+                               if name.lower().startswith(produce_lower + " - ")}
+            else:
+                self.classes = all_classes
+
+        self.class_dropdown['values'] = list(self.classes.keys())
+        self.update_class_buttons()
+        self.loaded_data = data
+    
+    def prompt_produce_name(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Filter Classes by Produce")
+        dialog.geometry("600x120")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="Enter ASIN name (not case sensitive) to filter classes, e.g., strawberry:").pack(pady=10)
+        entry = tk.Entry(dialog, width=30)
+        entry.pack(pady=5)
+        entry.focus()
+        
+        result = [None]
+        
+        def on_ok():
+            result[0] = entry.get().strip()
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+        
+        entry.bind('<Return>', lambda e: on_ok())
+        
+        dialog.wait_window()
+        return result[0]
+    
+    def manage_classes(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Manage Classes")
+        dialog.geometry("400x350")
+        
+        tk.Label(dialog, text="Class Index:").grid(row=0, column=0, padx=5, pady=5)
+        idx_entry = tk.Entry(dialog)
+        idx_entry.grid(row=0, column=1, padx=5, pady=5)
+        
+        tk.Label(dialog, text="Class Name:").grid(row=1, column=0, padx=5, pady=5)
+        name_entry = tk.Entry(dialog)
+        name_entry.grid(row=1, column=1, padx=5, pady=5)
+        
+        selected_class = [None]
+        
+        def add_class():
+            idx = idx_entry.get().strip()
+            name = name_entry.get().strip()
+            if idx and name:
+                self.classes[name] = idx
+                self.class_dropdown['values'] = list(self.classes.keys())
+                if not self.class_dropdown.get():
+                    self.class_dropdown.set(name)
+                refresh_listbox()
+                idx_entry.delete(0, tk.END)
+                name_entry.delete(0, tk.END)
+                self.update_class_buttons()
+        
+        def modify_class():
+            if selected_class[0]:
+                old_name = selected_class[0]
+                new_idx = idx_entry.get().strip()
+                new_name = name_entry.get().strip()
+                if new_idx and new_name:
+                    del self.classes[old_name]
+                    self.classes[new_name] = new_idx
+                    
+                    # Update polygon labels
+                    for key in list(self.polygon_labels.keys()):
+                        if self.polygon_labels[key] == self.classes.get(old_name):
+                            self.polygon_labels[key] = new_idx
+                    
+                    self.class_dropdown['values'] = list(self.classes.keys())
+                    refresh_listbox()
+                    idx_entry.delete(0, tk.END)
+                    name_entry.delete(0, tk.END)
+                    selected_class[0] = None
+                    self.update_class_buttons()
+        
+        def on_select(event):
+            selection = listbox.curselection()
+            if selection:
+                item = listbox.get(selection[0])
+                idx, name = item.split(": ", 1)
+                idx_entry.delete(0, tk.END)
+                idx_entry.insert(0, idx)
+                name_entry.delete(0, tk.END)
+                name_entry.insert(0, name)
+                selected_class[0] = name
+        
+        def refresh_listbox():
+            listbox.delete(0, tk.END)
+            for name, idx in self.classes.items():
+                listbox.insert(tk.END, f"{idx}: {name}")
+        
+        btn_frame = tk.Frame(dialog)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        tk.Button(btn_frame, text="Add Class", command=add_class).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Modify Class", command=modify_class).pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(dialog, text="Current Classes:").grid(row=3, column=0, columnspan=2)
+        listbox = tk.Listbox(dialog, height=10)
+        listbox.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
+        listbox.bind('<<ListboxSelect>>', on_select)
+        
+        refresh_listbox()
+        
+        dialog.grid_rowconfigure(4, weight=1)
+        dialog.grid_columnconfigure(1, weight=1)
+    
+    def load_annotations(self):
+        if not self.directory:
+            messagebox.showwarning("No Directory", "Please load a directory first")
+            return
+        
+        path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
+        if path:
+            with open(path, "r") as f:
+                data = json.load(f)
+            
+            file_dict = data.get("file", {})
+            metadata_dict = data.get("metadata", {})
+            attribute_dict = data.get("attribute", {})
+            
+            if "1" in attribute_dict and "options" in attribute_dict["1"]:
+                all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
+                
+                # Prompt for produce name to filter classes
+                produce_name = self.prompt_produce_name()
+                if produce_name:
+                    produce_lower = produce_name.lower()
+                    self.classes = {name: idx for name, idx in all_classes.items() 
+                                   if name.lower().startswith(produce_lower + " - ")}
+                else:
+                    self.classes = all_classes
+                
+                self.class_dropdown['values'] = list(self.classes.keys())
+                self.update_class_buttons()
+            
+            self.root.update_idletasks()
+            frame_width = self.canvas_frame.winfo_width()
+            frame_height = self.canvas_frame.winfo_height()
+            
+            loaded_annotations = {}
+            self.polygon_labels = {}
+            
+            for file_id, file_info in file_dict.items():
+                fname = file_info["fname"]
+                img_path = os.path.join(self.directory, fname)
+                
+                if os.path.exists(img_path):
+                    polygons = []
+                    poly_idx = 0
+                    
+                    for key, poly_data in metadata_dict.items():
+                        if key.startswith(f"{file_id}_"):
+                            coords = poly_data["xy"]
+                            polygon = []
+                            # Store in original image coordinates
+                            for i in range(1, len(coords), 2):
+                                x = coords[i]
+                                y = coords[i+1]
+                                polygon.append((x, y))
+                            polygons.append(polygon)
+                            
+                            if "av" in poly_data and "1" in poly_data["av"]:
+                                class_idx = poly_data["av"]["1"]
+                                poly_key = (img_path, poly_idx)
+                                self.polygon_labels[poly_key] = class_idx
+                            
+                            poly_idx += 1
+                    
+                    loaded_annotations[img_path] = polygons
+            
+            self.all_annotations = loaded_annotations
+            self.loaded_data = data
+            self.restore_annotations()
+            messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
+    
+    def prompt_project_name(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Project Name")
+        dialog.geometry("400x120")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="Enter project name:").pack(pady=10)
+        entry = tk.Entry(dialog, width=40)
+        entry.pack(pady=5)
+        entry.focus()
+        
+        result = [None]
+        
+        def on_ok():
+            result[0] = entry.get().strip()
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+        
+        entry.bind('<Return>', lambda e: on_ok())
+        
+        dialog.wait_window()
+        return result[0]
+    
+    def save_annotations(self):
+        self.save_current_annotations()
+        
+        if not self.all_annotations or all(not polys for polys in self.all_annotations.values()):
+            messagebox.showwarning("No Annotations", "No polygons to save")
+            return
+        
+        project_name = self.prompt_project_name()
+        if not project_name:
+            return
+        
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
+        if path:
+            if self.loaded_data:
+                output = self.loaded_data.copy()
+                file_dict = output.get("file", {})
+                metadata_dict = output.get("metadata", {})
+                attribute_dict = output.get("attribute", {})
+            else:
+                output = {}
+                file_dict = {}
+                metadata_dict = {}
+                attribute_dict = {}
+            
+            # Update file entries and metadata for annotated images
+            file_id_map = {info["fname"]: fid for fid, info in file_dict.items()}
+            next_file_id = max([int(fid) for fid in file_dict.keys()], default=0) + 1
+            
+            for img_path, polygons in self.all_annotations.items():
+                fname = os.path.basename(img_path)
+                
+                if fname in file_id_map:
+                    file_id = file_id_map[fname]
+                    # Remove old metadata for this file
+                    metadata_dict = {k: v for k, v in metadata_dict.items() if not k.startswith(f"{file_id}_")}
+                else:
+                    file_id = str(next_file_id)
+                    next_file_id += 1
+                    file_dict[file_id] = {"fid": file_id, "fname": fname}
+                
+                # Ensure existing entries have fid
+                if "fid" not in file_dict[file_id]:
+                    file_dict[file_id]["fid"] = file_id
+                
+                if polygons:
+                    for poly_idx, polygon in enumerate(polygons):
+                        random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                        key = f"{file_id}_{random_str}"
+                        
+                        coords = [2]
+                        # Polygons are already in original coordinates
+                        for i in range(len(polygon)):
+                            x, y = polygon[i]
+                            coords.extend([int(x), int(y)])
+                        
+                        poly_key = (img_path, poly_idx)
+                        class_idx = self.polygon_labels.get(poly_key, "405")
+                        
+                        metadata_dict[key] = {
+                            "vid": file_id,
+                            "xy": coords,
+                            "av": {"1": class_idx if class_idx else "405"}
+                        }
+            
+            # Ensure existing metadata entries have vid
+            for key, poly_data in metadata_dict.items():
+                if "vid" not in poly_data and "_" in key:
+                    poly_data["vid"] = key.split("_")[0]
+            
+            # Update attribute with all classes (loaded + new)
+            if "1" not in attribute_dict:
+                attribute_dict["1"] = {"options": {}}
+            attribute_dict["1"]["options"].update({idx: name for name, idx in self.classes.items()})
+            
+            # Update project name
+            if "project" not in output:
+                output["project"] = {}
+            output["project"]["pname"] = project_name
+            
+            output["file"] = file_dict
+            output["attribute"] = attribute_dict
+            output["metadata"] = metadata_dict
+            
+            with open(path, "w") as f:
+                json.dump(output, f, indent=4)
+            messagebox.showinfo("Saved", f"Annotations for {len(file_dict)} image(s) saved to {path}")
+
+def polygon_annotator_tool_with_reference(res="1600x1000", custom_classes=None, asin="strawberry"):
+    root = tk.Tk()
+    root.geometry("1600x1000")
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin)
+    root.mainloop()
+
+if __name__ == "__main__":
+    polygon_annotator_tool_with_reference()
