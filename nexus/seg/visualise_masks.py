@@ -6,9 +6,8 @@ mask overlay on the right.
 Fred Zhang <fredzz@amazon.com>
 """
 import os
-import argparse
-
 import cv2
+import argparse
 import numpy as np
 
 DEFAULT_COLOUR_MAP = {
