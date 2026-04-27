@@ -1,1 +1,1 @@
-from .polygon_annotation import PolygonAnnotationWithReference, polygon_annotator_tool_with_reference
+from .polygon_annotation import PolygonAnnotationWithReference, polygon_annotation_with_reference

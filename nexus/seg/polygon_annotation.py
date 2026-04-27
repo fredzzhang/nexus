@@ -1,10 +1,14 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-from PIL import Image, ImageTk, ImageDraw, ImageFont
-import json
+"""Polygon annotation tool with reference views
+
+Fred Zhang <frezz@amazon.com>
+"""
 import os
+import json
 import random
 import string
+import tkinter as tk
+from PIL import Image, ImageTk, ImageDraw
+from tkinter import filedialog, messagebox, ttk
 
 BASE_DATA = {
     "project": {"pname": ""},
@@ -28,11 +32,47 @@ BASE_DATA = {
 }
 
 class PolygonAnnotationWithReference:
-    def __init__(self, root, custom_classes=None, asin="strawberry"):
+    """A tkinter-based polygon annotation tool with side-by-side reference image viewing.
+
+    Allows users to draw, edit, and label polygons on images while viewing
+    corresponding reference images. Annotations are saved/loaded in a VIA-compatible
+    JSON format with file, metadata, and attribute sections.
+
+    Args:
+        root: The tkinter root window.
+        custom_classes: Optional dict mapping class index strings to class names
+            (e.g. {"500": "Blueberry - Decay"}). Indices must not collide with
+            those in BASE_DATA.
+        asin: Product name used to filter classes at startup (case-insensitive).
+            Classes whose names start with "<asin> - " are shown. If None, the
+            user is prompted via a dialog.
+        name_format: Optional list of glob-like patterns defining the naming
+            convention for annotation and reference images. The first pattern
+            identifies the annotation image; the rest identify reference images.
+            Each pattern uses '*' as a wildcard for the shared stem between
+            filenames. For example::
+
+                ['*_cam0.jpg', '*_cam1.jpg', '*_cam2.jpg']
+
+            means files like ``001_cam0.jpg`` (annotate), ``001_cam1.jpg`` and
+            ``001_cam2.jpg`` (references) share the stem ``001``.
+            If None, all images in the directory are treated as annotation
+            targets with no reference images.
+
+    Controls:
+        - Left-click: Add polygon vertex (click near first point to close).
+        - Right-click: Close current polygon.
+        - Double-click: Delete polygon under cursor.
+        - Edit Mode: Select polygons to drag vertices or reassign classes.
+        - Prev/Next Ref buttons: Scroll through reference images.
+    """
+
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
         self._asin = asin
+        self._name_format = name_format
         
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -54,8 +94,23 @@ class PolygonAnnotationWithReference:
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        self.ref_canvas = tk.Canvas(self.canvas_frame)
-        self.ref_canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.ref_container = tk.Frame(self.canvas_frame)
+        self.ref_container.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        ref_nav = tk.Frame(self.ref_container)
+        ref_nav.pack(side=tk.TOP, fill=tk.X)
+        tk.Button(ref_nav, text="< Prev Ref", command=self.prev_ref).pack(side=tk.LEFT)
+        self.ref_label = tk.Label(ref_nav, text="No reference")
+        self.ref_label.pack(side=tk.LEFT, padx=10)
+        tk.Button(ref_nav, text="Next Ref >", command=self.next_ref).pack(side=tk.LEFT)
+        
+        self.ref_canvas = tk.Canvas(self.ref_container)
+        self.ref_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        self.ref_images = []
+        self.ref_photos = []
+        self.ref_names = []
+        self.current_ref_index = 0
         
         self.btn_frame = tk.Frame(root)
         self.btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
@@ -83,7 +138,6 @@ class PolygonAnnotationWithReference:
         
         self.image = None
         self.photo = None
-        self.ref_photo = None
         self.current_polygon = []
         self.polygons = []
         self.polygon_items = []
@@ -110,14 +164,29 @@ class PolygonAnnotationWithReference:
         
         self.load_base_classes()
     
+    @staticmethod
+    def _parse_pattern(pattern):
+        parts = pattern.split('*', 1)
+        return (parts[0], parts[1]) if len(parts) == 2 else ('', parts[0])
+
+    def _match_pattern(self, filename, prefix, suffix):
+        return filename.startswith(prefix) and filename.endswith(suffix)
+
+    def _extract_stem(self, filename, prefix, suffix):
+        return filename[len(prefix):len(filename) - len(suffix)]
+
     def load_directory(self):
         directory = filedialog.askdirectory()
         if directory:
             self.directory = directory
-            all_files = [f for f in os.listdir(directory)
-                        if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-            self.image_files = [os.path.join(directory, f) for f in all_files
-                               if 'ref' not in f]
+            all_files = sorted(f for f in os.listdir(directory)
+                               if f.lower().endswith(('.png', '.jpg', '.jpeg')))
+            if self._name_format:
+                ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
+                self.image_files = [os.path.join(directory, f) for f in all_files
+                                    if self._match_pattern(f, ann_prefix, ann_suffix)]
+            else:
+                self.image_files = [os.path.join(directory, f) for f in all_files]
             self.image_files.sort()
             if self.image_files:
                 filenames = [os.path.basename(f) for f in self.image_files]
@@ -175,46 +244,66 @@ class PolygonAnnotationWithReference:
                 break
     
     def load_reference_image(self, main_path):
+        self.ref_photos = []
+        self.ref_names = []
+        self.current_ref_index = 0
+
+        ref_patterns = self._name_format[1:] if self._name_format and len(self._name_format) > 1 else []
+        if not ref_patterns:
+            self.ref_canvas.delete("all")
+            self.ref_label.config(text="No reference")
+            return
+
         basename = os.path.basename(main_path)
-        name, ext = os.path.splitext(basename)
-        parts = name.split('_')
-        
-        # Search for a file with 'ref' as a segment that matches other parts
-        ref_path = None
-        for fname in os.listdir(self.directory):
-            if fname.lower().endswith(ext.lower()) and 'ref' in fname:
-                fname_parts = os.path.splitext(fname)[0].split('_')
-                if 'ref' in fname_parts:
-                    # Remove 'ref' and check if remaining parts match
-                    fname_parts_no_ref = [p for p in fname_parts if p != 'ref']
-                    if fname_parts_no_ref == parts:
-                        ref_path = os.path.join(self.directory, fname)
-                        break
-        
+        ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
+        stem = self._extract_stem(basename, ann_prefix, ann_suffix)
+
+        for pattern in ref_patterns:
+            ref_prefix, ref_suffix = self._parse_pattern(pattern)
+            ref_name = ref_prefix + stem + ref_suffix
+            ref_path = os.path.join(self.directory, ref_name)
+
+            if os.path.exists(ref_path):
+                ref_image = Image.open(ref_path)
+                scale = min(self.max_width / ref_image.width,
+                            self.max_height / ref_image.height, 1.0)
+                new_size = (int(ref_image.width * scale),
+                            int(ref_image.height * scale))
+                ref_image = ref_image.resize(new_size, Image.LANCZOS)
+                photo = ImageTk.PhotoImage(ref_image)
+            else:
+                new_size = (int(self.image.width * self.scale),
+                            int(self.image.height * self.scale))
+                placeholder = Image.new('RGB', new_size, 'gray')
+                draw = ImageDraw.Draw(placeholder)
+                draw.text((placeholder.width // 2 - 80, placeholder.height // 2),
+                          f"No ref: {ref_name}", fill='white')
+                photo = ImageTk.PhotoImage(placeholder)
+            self.ref_photos.append(photo)
+            self.ref_names.append(ref_name)
+
+        self.show_current_ref()
+
+    def show_current_ref(self):
         self.ref_canvas.delete("all")
-        
-        if ref_path and os.path.exists(ref_path):
-            ref_image = Image.open(ref_path)
+        if not self.ref_photos:
+            self.ref_label.config(text="No reference")
+            return
+        photo = self.ref_photos[self.current_ref_index]
+        self.ref_canvas.config(width=photo.width(), height=photo.height())
+        self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+        name = self.ref_names[self.current_ref_index]
+        self.ref_label.config(text=f"Ref {self.current_ref_index + 1}/{len(self.ref_photos)}: {name}")
 
-            scale = min(self.max_width / ref_image.width, 
-                    self.max_height / ref_image.height, 1.0)
+    def prev_ref(self):
+        if self.ref_photos and self.current_ref_index > 0:
+            self.current_ref_index -= 1
+            self.show_current_ref()
 
-            new_size = (int(ref_image.width * scale), 
-                       int(ref_image.height * scale))
-            ref_image = ref_image.resize(new_size, Image.LANCZOS)
-            self.ref_photo = ImageTk.PhotoImage(ref_image)
-            self.ref_canvas.config(width=new_size[0], height=new_size[1])
-            self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=self.ref_photo)
-        else:
-            new_size = (int(self.image.width * self.scale), 
-                       int(self.image.height * self.scale))
-            placeholder = Image.new('RGB', new_size, 'gray')
-            draw = ImageDraw.Draw(placeholder)
-            draw.text((placeholder.width//2 - 80, placeholder.height//2), 
-                     "No reference image", fill='white')
-            self.ref_photo = ImageTk.PhotoImage(placeholder)
-            self.ref_canvas.config(width=new_size[0], height=new_size[1])
-            self.ref_canvas.create_image(0, 0, anchor=tk.NW, image=self.ref_photo)
+    def next_ref(self):
+        if self.ref_photos and self.current_ref_index < len(self.ref_photos) - 1:
+            self.current_ref_index += 1
+            self.show_current_ref()
     
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -851,11 +940,26 @@ class PolygonAnnotationWithReference:
                 json.dump(output, f, indent=4)
             messagebox.showinfo("Saved", f"Annotations for {len(file_dict)} image(s) saved to {path}")
 
-def polygon_annotator_tool_with_reference(res="1600x1000", custom_classes=None, asin="strawberry"):
+def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None):
+    """Launch the polygon annotation tool.
+
+    Args:
+        res: Window geometry string (default "1600x1000").
+        custom_classes: Optional dict mapping class index strings to class names
+            (e.g. {"500": "Blueberry - Decay"}). Must not collide with BASE_DATA.
+        asin: Product name to filter classes at startup. If None, prompts the user.
+        name_format: Optional list of glob-like patterns. The first pattern
+            identifies annotation images; the rest identify reference images.
+            Uses '*' as a wildcard for the shared stem. Example::
+
+                ['*_cam0.jpg', '*_cam1.jpg', '*_cam2.jpg']
+
+            If None, all images are annotation targets with no references.
+    """
     root = tk.Tk()
-    root.geometry("1600x1000")
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin)
+    root.geometry(res)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format)
     root.mainloop()
 
 if __name__ == "__main__":
-    polygon_annotator_tool_with_reference()
+    polygon_annotation_with_reference()
