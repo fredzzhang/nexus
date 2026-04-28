@@ -174,7 +174,7 @@ class PolygonAnnotationWithReference:
                 self.image_files = [os.path.join(directory, f) for f in all_files]
             self.image_files.sort()
             if self.image_files:
-                filenames = [os.path.basename(f) for f in self.image_files]
+                filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
                 self.file_dropdown['values'] = filenames
                 self.all_annotations = {}
                 self.current_index = 0
@@ -204,7 +204,7 @@ class PolygonAnnotationWithReference:
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
             self.image_path = path
             self.filename_label.config(text=f"{os.path.basename(path)} ({self.current_index + 1}/{len(self.image_files)})")
-            self.file_dropdown.set(os.path.basename(path))
+            self.file_dropdown.set(f"[{self.current_index + 1}] {os.path.basename(path)}")
             self.current_polygon = []
             
             self.load_reference_image(path)
@@ -222,11 +222,9 @@ class PolygonAnnotationWithReference:
     
     def on_file_selected(self, event):
         selected = self.file_dropdown.get()
-        for i, path in enumerate(self.image_files):
-            if os.path.basename(path) == selected:
-                self.current_index = i
-                self.load_current_image()
-                break
+        idx = int(selected.split("]", 1)[0].lstrip("[")) - 1
+        self.current_index = idx
+        self.load_current_image()
     
     def load_reference_image(self, main_path):
         for c in self.ref_canvases:
