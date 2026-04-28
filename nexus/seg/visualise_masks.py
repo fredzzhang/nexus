@@ -25,7 +25,8 @@ DEFAULT_ALPHA = 0.5
 
 
 def visualise_one(image_path, mask_path, colour_map=None, label_map=None,
-                  background=DEFAULT_BACKGROUND, alpha=DEFAULT_ALPHA):
+                  background=DEFAULT_BACKGROUND, alpha=DEFAULT_ALPHA,
+                  show_ratio=False):
     """Create a side-by-side visualisation of an image and its mask overlay.
 
     Args:
@@ -39,6 +40,8 @@ def visualise_one(image_path, mask_path, colour_map=None, label_map=None,
         background: Pixel value treated as background (not overlaid).
             Defaults to 255.
         alpha: Opacity of the mask overlay. Defaults to 0.5.
+        show_ratio: If True, append the area ratio of each class
+            (relative to the whole image) in the legend.
 
     Returns:
         A numpy array (H, W*2, 3) with the original image on the left
@@ -65,8 +68,16 @@ def visualise_one(image_path, mask_path, colour_map=None, label_map=None,
 
     # Draw legend
     present = set(np.unique(mask)) - {background}
-    entries = [(pv, colour_map[pv], label_map.get(pv, str(pv)))
-               for pv in sorted(colour_map) if pv in present]
+    total_pixels = mask.shape[0] * mask.shape[1]
+    entries = []
+    for pv in sorted(colour_map):
+        if pv not in present:
+            continue
+        lbl = label_map.get(pv, str(pv))
+        if show_ratio:
+            ratio = np.count_nonzero(mask == pv) / total_pixels
+            lbl += f" ({ratio:.1%})"
+        entries.append((pv, colour_map[pv], lbl))
     if entries:
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
@@ -101,7 +112,7 @@ def visualise_one(image_path, mask_path, colour_map=None, label_map=None,
 
 def visualise_directory(image_dir, mask_dir, output_dir, colour_map=None,
                         label_map=None, background=DEFAULT_BACKGROUND,
-                        alpha=DEFAULT_ALPHA):
+                        alpha=DEFAULT_ALPHA, show_ratio=False):
     """Generate overlay visualisations for all masks in a directory.
 
     Iterates through mask images and finds corresponding source images
@@ -118,6 +129,8 @@ def visualise_directory(image_dir, mask_dir, output_dir, colour_map=None,
             legend. Defaults to DEFAULT_LABEL_MAP.
         background: Pixel value treated as background. Defaults to 255.
         alpha: Opacity of the mask overlay. Defaults to 0.5.
+        show_ratio: If True, append the area ratio of each class
+            in the legend.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -140,7 +153,8 @@ def visualise_directory(image_dir, mask_dir, output_dir, colour_map=None,
         mask_path = os.path.join(mask_dir, mask_name)
         vis = visualise_one(image_lookup[stem], mask_path,
                             colour_map=colour_map, label_map=label_map,
-                            background=background, alpha=alpha)
+                            background=background, alpha=alpha,
+                            show_ratio=show_ratio)
         if vis is None:
             print(f"Warning: could not read {mask_name} or its source, skipping")
             continue
@@ -161,7 +175,10 @@ if __name__ == "__main__":
                         help="Output directory (default: <mask_dir>_vis)")
     parser.add_argument("-a", "--alpha", type=float, default=DEFAULT_ALPHA,
                         help=f"Overlay opacity (default: {DEFAULT_ALPHA})")
+    parser.add_argument("--show-ratio", action="store_true",
+                        help="Show area ratio of each class in the legend")
     args = parser.parse_args()
 
     output_dir = args.output or args.mask_dir.rstrip("/") + "_vis"
-    visualise_directory(args.image_dir, args.mask_dir, output_dir, alpha=args.alpha)
+    visualise_directory(args.image_dir, args.mask_dir, output_dir,
+                        alpha=args.alpha, show_ratio=args.show_ratio)
