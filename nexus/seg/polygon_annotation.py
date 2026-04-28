@@ -903,6 +903,65 @@ class PolygonAnnotationWithReference:
                 json.dump(output, f, indent=4)
             messagebox.showinfo("Saved", f"Annotations for {len(file_dict)} image(s) saved to {path}")
 
+def merge_annotations(annotation_files, image_dir, output_path):
+    """Combine multiple annotation files, keeping only entries whose images exist.
+
+    Args:
+        annotation_files: List of paths to annotation JSON files.
+        image_dir: Directory containing images. Only annotations whose
+            ``fname`` is found in this directory are kept.
+        output_path: Path to write the merged JSON file.
+    """
+    existing_images = set(os.listdir(image_dir))
+    merged_file = {}
+    merged_metadata = {}
+    merged_options = {}
+    project_name = ""
+    next_fid = 1
+    fname_to_fid = {}
+
+    for ann_path in annotation_files:
+        with open(ann_path, "r") as f:
+            data = json.load(f)
+
+        project_name = project_name or data.get("project", {}).get("pname", "")
+        opts = data.get("attribute", {}).get("1", {}).get("options", {})
+        merged_options.update(opts)
+
+        old_file = data.get("file", {})
+        old_meta = data.get("metadata", {})
+
+        # Map old fid -> fname for files present in image_dir
+        old_fid_to_fname = {}
+        for fid, info in old_file.items():
+            fname = info.get("fname", "")
+            if fname not in existing_images:
+                continue
+            old_fid_to_fname[fid] = fname
+            if fname not in fname_to_fid:
+                fname_to_fid[fname] = str(next_fid)
+                merged_file[str(next_fid)] = {"fid": str(next_fid), "fname": fname}
+                next_fid += 1
+
+        # Re-key metadata under new fids
+        for key, meta in old_meta.items():
+            old_fid = meta.get("vid", key.split("_")[0])
+            if old_fid not in old_fid_to_fname:
+                continue
+            new_fid = fname_to_fid[old_fid_to_fname[old_fid]]
+            rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            new_key = f"{new_fid}_{rand}"
+            merged_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
+
+    output = {
+        "project": {"pname": project_name},
+        "attribute": {"1": {"options": merged_options}},
+        "file": merged_file,
+        "metadata": merged_metadata,
+    }
+    with open(output_path, "w") as f:
+        json.dump(output, f, indent=4)
+
 def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None):
     """Launch the polygon annotation tool.
 
