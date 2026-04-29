@@ -103,7 +103,8 @@ class PolygonAnnotationWithReference:
         control_frame = tk.Frame(self.btn_frame)
         control_frame.pack(side=tk.TOP, fill=tk.X)
         
-        tk.Button(control_frame, text="Clear Polygon", command=self.clear_current).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Clear Current", command=self.clear_current).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT)
         self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF", command=self.toggle_edit_mode)
         self.edit_mode_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
@@ -404,6 +405,22 @@ class PolygonAnnotationWithReference:
             self.current_polygon = []
     
     def clear_current(self):
+        self.canvas.delete("temp")
+        self.current_polygon = []
+    
+    def clear_all(self):
+        if not self.polygons:
+            return
+        if not messagebox.askyesno("Clear All", "Remove all polygons on this image?"):
+            return
+        self.deselect_polygon()
+        self.polygons = []
+        self.polygon_items = []
+        for key in list(self.polygon_labels):
+            if key[0] == self.image_path:
+                del self.polygon_labels[key]
+        self.all_annotations[self.image_path] = []
+        self.canvas.delete("polygon")
         self.canvas.delete("temp")
         self.current_polygon = []
     
