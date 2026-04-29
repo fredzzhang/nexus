@@ -838,50 +838,39 @@ class PolygonAnnotationWithReference:
                 metadata_dict = {}
                 attribute_dict = {}
             
-            # Update file entries and metadata for annotated images
-            file_id_map = {info["fname"]: fid for fid, info in file_dict.items()}
-            next_file_id = max([int(fid) for fid in file_dict.keys()], default=0) + 1
+            # Build new file and metadata dicts with sequential keys
+            new_file_dict = {}
+            new_metadata_dict = {}
+            next_fid = 1
             
             for img_path, polygons in self.all_annotations.items():
+                if not polygons:
+                    continue
                 fname = os.path.basename(img_path)
+                file_id = str(next_fid)
+                next_fid += 1
+                new_file_dict[file_id] = {"fid": file_id, "fname": fname}
                 
-                if fname in file_id_map:
-                    file_id = file_id_map[fname]
-                    # Remove old metadata for this file
-                    metadata_dict = {k: v for k, v in metadata_dict.items() if not k.startswith(f"{file_id}_")}
-                else:
-                    file_id = str(next_file_id)
-                    next_file_id += 1
-                    file_dict[file_id] = {"fid": file_id, "fname": fname}
-                
-                # Ensure existing entries have fid
-                if "fid" not in file_dict[file_id]:
-                    file_dict[file_id]["fid"] = file_id
-                
-                if polygons:
-                    for poly_idx, polygon in enumerate(polygons):
-                        random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                        key = f"{file_id}_{random_str}"
-                        
-                        coords = [2]
-                        # Polygons are already in original coordinates
-                        for i in range(len(polygon)):
-                            x, y = polygon[i]
-                            coords.extend([int(x), int(y)])
-                        
-                        poly_key = (img_path, poly_idx)
-                        class_idx = self.polygon_labels.get(poly_key, "405")
-                        
-                        metadata_dict[key] = {
-                            "vid": file_id,
-                            "xy": coords,
-                            "av": {"1": class_idx if class_idx else "405"}
-                        }
+                for poly_idx, polygon in enumerate(polygons):
+                    random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                    key = f"{file_id}_{random_str}"
+                    
+                    coords = [2]
+                    for i in range(len(polygon)):
+                        x, y = polygon[i]
+                        coords.extend([int(x), int(y)])
+                    
+                    poly_key = (img_path, poly_idx)
+                    class_idx = self.polygon_labels.get(poly_key, "405")
+                    
+                    new_metadata_dict[key] = {
+                        "vid": file_id,
+                        "xy": coords,
+                        "av": {"1": class_idx if class_idx else "405"}
+                    }
             
-            # Ensure existing metadata entries have vid
-            for key, poly_data in metadata_dict.items():
-                if "vid" not in poly_data and "_" in key:
-                    poly_data["vid"] = key.split("_")[0]
+            file_dict = new_file_dict
+            metadata_dict = new_metadata_dict
             
             # Update attribute with all classes (loaded + new)
             if "1" not in attribute_dict:
@@ -951,11 +940,30 @@ def merge_annotations(annotation_files, image_dir, output_path):
             new_key = f"{new_fid}_{rand}"
             merged_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
 
+    # Keep only files that have polygons, re-key sequentially
+    fids_with_polygons = {m["vid"] for m in merged_metadata.values()}
+    fid_remap = {}
+    final_file = {}
+    new_idx = 1
+    for old_fid, info in sorted(merged_file.items(), key=lambda x: int(x[0])):
+        if old_fid not in fids_with_polygons:
+            continue
+        new_fid = str(new_idx)
+        new_idx += 1
+        fid_remap[old_fid] = new_fid
+        final_file[new_fid] = {"fid": new_fid, "fname": info["fname"]}
+    final_metadata = {}
+    for key, meta in merged_metadata.items():
+        new_fid = fid_remap[meta["vid"]]
+        rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        new_key = f"{new_fid}_{rand}"
+        final_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
+
     output = {
         "project": {"pname": project_name},
         "attribute": {"1": {"options": merged_options}},
-        "file": merged_file,
-        "metadata": merged_metadata,
+        "file": final_file,
+        "metadata": final_metadata,
     }
     with open(output_path, "w") as f:
         json.dump(output, f, indent=4)
