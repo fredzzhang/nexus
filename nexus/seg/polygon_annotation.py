@@ -92,7 +92,7 @@ class PolygonAnnotationWithReference:
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.pack(side=tk.LEFT, anchor=tk.N)
         
         self.ref_canvases = []
         self.ref_photos = []
@@ -263,7 +263,7 @@ class PolygonAnnotationWithReference:
             self.ref_photos.append(photo)
 
             canvas = tk.Canvas(self.canvas_frame, width=new_size[0], height=new_size[1])
-            canvas.pack(side=tk.LEFT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, anchor=tk.N)
             canvas.create_image(0, 0, anchor=tk.NW, image=photo)
             self.ref_canvases.append(canvas)
     
