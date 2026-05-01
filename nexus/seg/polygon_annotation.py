@@ -4,6 +4,7 @@ Fred Zhang <frezz@amazon.com>
 """
 import os
 import json
+import copy
 import random
 import string
 import tkinter as tk
@@ -113,6 +114,7 @@ class PolygonAnnotationWithReference:
         self.class_dropdown.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Revert", command=self.revert_annotations).pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -139,6 +141,8 @@ class PolygonAnnotationWithReference:
         self.colors = ['green', 'blue', 'red', 'yellow', 'purple', 'orange', 'cyan', 'magenta']
         self.selected_class = None
         self.loaded_data = None
+        self._saved_annotations = {}
+        self._saved_labels = {}
         self.edit_mode = False
         self.selected_polygon_idx = None
         self.selected_vertex_idx = None
@@ -424,6 +428,29 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("temp")
         self.current_polygon = []
     
+    def revert_annotations(self):
+        if not hasattr(self, 'image_path'):
+            return
+        path = self.image_path
+        if path in self._saved_annotations:
+            self.all_annotations[path] = copy.deepcopy(self._saved_annotations[path])
+            # Restore labels for this image
+            for key in list(self.polygon_labels):
+                if key[0] == path:
+                    del self.polygon_labels[key]
+            for key, val in self._saved_labels.items():
+                if key[0] == path:
+                    self.polygon_labels[key] = val
+        else:
+            self.all_annotations[path] = []
+            for key in list(self.polygon_labels):
+                if key[0] == path:
+                    del self.polygon_labels[key]
+        self.deselect_polygon()
+        self.canvas.delete("temp")
+        self.current_polygon = []
+        self.restore_annotations()
+    
     def delete_polygon(self, event):
         if event.widget != self.canvas:
             return
@@ -586,7 +613,6 @@ class PolygonAnnotationWithReference:
         self.root.after(100, self.reflow_class_buttons)
     
     def load_base_classes(self):
-        import copy
         data = copy.deepcopy(BASE_DATA)
         base_options = data["attribute"]["1"]["options"]
 
@@ -796,6 +822,8 @@ class PolygonAnnotationWithReference:
                     loaded_annotations[img_path] = polygons
             
             self.all_annotations = loaded_annotations
+            self._saved_annotations = copy.deepcopy(loaded_annotations)
+            self._saved_labels = copy.deepcopy(self.polygon_labels)
             self.loaded_data = data
             self.restore_annotations()
             messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
