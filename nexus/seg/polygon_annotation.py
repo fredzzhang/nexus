@@ -457,6 +457,7 @@ class PolygonAnnotationWithReference:
     def toggle_show_original(self):
         self.showing_original = not self.showing_original
         if self.showing_original:
+            self.save_current_annotations()
             self.show_original_btn.config(relief=tk.SUNKEN, text="Show Annotations")
             self.canvas.delete("polygon")
             self.canvas.delete("vertex_handle")
