@@ -4,6 +4,7 @@ Fred Zhang <frezz@amazon.com>
 """
 import os
 import json
+import copy
 import random
 import string
 import tkinter as tk
@@ -92,7 +93,7 @@ class PolygonAnnotationWithReference:
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.pack(side=tk.LEFT, anchor=tk.N)
         
         self.ref_canvases = []
         self.ref_photos = []
@@ -103,7 +104,8 @@ class PolygonAnnotationWithReference:
         control_frame = tk.Frame(self.btn_frame)
         control_frame.pack(side=tk.TOP, fill=tk.X)
         
-        tk.Button(control_frame, text="Clear Polygon", command=self.clear_current).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Clear Current", command=self.clear_current).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT)
         self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF", command=self.toggle_edit_mode)
         self.edit_mode_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
@@ -112,6 +114,9 @@ class PolygonAnnotationWithReference:
         self.class_dropdown.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Revert", command=self.revert_annotations).pack(side=tk.LEFT)
+        self.show_original_btn = tk.Button(control_frame, text="Show Original", command=self.toggle_show_original)
+        self.show_original_btn.pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -138,7 +143,10 @@ class PolygonAnnotationWithReference:
         self.colors = ['green', 'blue', 'red', 'yellow', 'purple', 'orange', 'cyan', 'magenta']
         self.selected_class = None
         self.loaded_data = None
+        self._saved_annotations = {}
+        self._saved_labels = {}
         self.edit_mode = False
+        self.showing_original = False
         self.selected_polygon_idx = None
         self.selected_vertex_idx = None
         self.vertex_handles = []
@@ -174,7 +182,7 @@ class PolygonAnnotationWithReference:
                 self.image_files = [os.path.join(directory, f) for f in all_files]
             self.image_files.sort()
             if self.image_files:
-                filenames = [os.path.basename(f) for f in self.image_files]
+                filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
                 self.file_dropdown['values'] = filenames
                 self.all_annotations = {}
                 self.current_index = 0
@@ -204,7 +212,7 @@ class PolygonAnnotationWithReference:
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
             self.image_path = path
             self.filename_label.config(text=f"{os.path.basename(path)} ({self.current_index + 1}/{len(self.image_files)})")
-            self.file_dropdown.set(os.path.basename(path))
+            self.file_dropdown.set(f"[{self.current_index + 1}] {os.path.basename(path)}")
             self.current_polygon = []
             
             self.load_reference_image(path)
@@ -222,11 +230,9 @@ class PolygonAnnotationWithReference:
     
     def on_file_selected(self, event):
         selected = self.file_dropdown.get()
-        for i, path in enumerate(self.image_files):
-            if os.path.basename(path) == selected:
-                self.current_index = i
-                self.load_current_image()
-                break
+        idx = int(selected.split("]", 1)[0].lstrip("[")) - 1
+        self.current_index = idx
+        self.load_current_image()
     
     def load_reference_image(self, main_path):
         for c in self.ref_canvases:
@@ -264,7 +270,7 @@ class PolygonAnnotationWithReference:
             self.ref_photos.append(photo)
 
             canvas = tk.Canvas(self.canvas_frame, width=new_size[0], height=new_size[1])
-            canvas.pack(side=tk.LEFT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, anchor=tk.N)
             canvas.create_image(0, 0, anchor=tk.NW, image=photo)
             self.ref_canvases.append(canvas)
     
@@ -408,6 +414,57 @@ class PolygonAnnotationWithReference:
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
+    
+    def clear_all(self):
+        if not self.polygons:
+            return
+        if not messagebox.askyesno("Clear All", "Remove all polygons on this image?"):
+            return
+        self.deselect_polygon()
+        self.polygons = []
+        self.polygon_items = []
+        for key in list(self.polygon_labels):
+            if key[0] == self.image_path:
+                del self.polygon_labels[key]
+        self.all_annotations[self.image_path] = []
+        self.canvas.delete("polygon")
+        self.canvas.delete("temp")
+        self.current_polygon = []
+    
+    def revert_annotations(self):
+        if not hasattr(self, 'image_path'):
+            return
+        path = self.image_path
+        if path in self._saved_annotations:
+            self.all_annotations[path] = copy.deepcopy(self._saved_annotations[path])
+            # Restore labels for this image
+            for key in list(self.polygon_labels):
+                if key[0] == path:
+                    del self.polygon_labels[key]
+            for key, val in self._saved_labels.items():
+                if key[0] == path:
+                    self.polygon_labels[key] = val
+        else:
+            self.all_annotations[path] = []
+            for key in list(self.polygon_labels):
+                if key[0] == path:
+                    del self.polygon_labels[key]
+        self.deselect_polygon()
+        self.canvas.delete("temp")
+        self.current_polygon = []
+        self.restore_annotations()
+    
+    def toggle_show_original(self):
+        self.showing_original = not self.showing_original
+        if self.showing_original:
+            self.save_current_annotations()
+            self.show_original_btn.config(relief=tk.SUNKEN, text="Show Annotations")
+            self.canvas.delete("polygon")
+            self.canvas.delete("vertex_handle")
+            self.canvas.delete("temp")
+        else:
+            self.show_original_btn.config(relief=tk.RAISED, text="Show Original")
+            self.restore_annotations()
     
     def delete_polygon(self, event):
         if event.widget != self.canvas:
@@ -571,7 +628,6 @@ class PolygonAnnotationWithReference:
         self.root.after(100, self.reflow_class_buttons)
     
     def load_base_classes(self):
-        import copy
         data = copy.deepcopy(BASE_DATA)
         base_options = data["attribute"]["1"]["options"]
 
@@ -781,6 +837,8 @@ class PolygonAnnotationWithReference:
                     loaded_annotations[img_path] = polygons
             
             self.all_annotations = loaded_annotations
+            self._saved_annotations = copy.deepcopy(loaded_annotations)
+            self._saved_labels = copy.deepcopy(self.polygon_labels)
             self.loaded_data = data
             self.restore_annotations()
             messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
@@ -840,50 +898,39 @@ class PolygonAnnotationWithReference:
                 metadata_dict = {}
                 attribute_dict = {}
             
-            # Update file entries and metadata for annotated images
-            file_id_map = {info["fname"]: fid for fid, info in file_dict.items()}
-            next_file_id = max([int(fid) for fid in file_dict.keys()], default=0) + 1
+            # Build new file and metadata dicts with sequential keys
+            new_file_dict = {}
+            new_metadata_dict = {}
+            next_fid = 1
             
             for img_path, polygons in self.all_annotations.items():
+                if not polygons:
+                    continue
                 fname = os.path.basename(img_path)
+                file_id = str(next_fid)
+                next_fid += 1
+                new_file_dict[file_id] = {"fid": file_id, "fname": fname}
                 
-                if fname in file_id_map:
-                    file_id = file_id_map[fname]
-                    # Remove old metadata for this file
-                    metadata_dict = {k: v for k, v in metadata_dict.items() if not k.startswith(f"{file_id}_")}
-                else:
-                    file_id = str(next_file_id)
-                    next_file_id += 1
-                    file_dict[file_id] = {"fid": file_id, "fname": fname}
-                
-                # Ensure existing entries have fid
-                if "fid" not in file_dict[file_id]:
-                    file_dict[file_id]["fid"] = file_id
-                
-                if polygons:
-                    for poly_idx, polygon in enumerate(polygons):
-                        random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                        key = f"{file_id}_{random_str}"
-                        
-                        coords = [2]
-                        # Polygons are already in original coordinates
-                        for i in range(len(polygon)):
-                            x, y = polygon[i]
-                            coords.extend([int(x), int(y)])
-                        
-                        poly_key = (img_path, poly_idx)
-                        class_idx = self.polygon_labels.get(poly_key, "405")
-                        
-                        metadata_dict[key] = {
-                            "vid": file_id,
-                            "xy": coords,
-                            "av": {"1": class_idx if class_idx else "405"}
-                        }
+                for poly_idx, polygon in enumerate(polygons):
+                    random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                    key = f"{file_id}_{random_str}"
+                    
+                    coords = [2]
+                    for i in range(len(polygon)):
+                        x, y = polygon[i]
+                        coords.extend([int(x), int(y)])
+                    
+                    poly_key = (img_path, poly_idx)
+                    class_idx = self.polygon_labels.get(poly_key, "405")
+                    
+                    new_metadata_dict[key] = {
+                        "vid": file_id,
+                        "xy": coords,
+                        "av": {"1": class_idx if class_idx else "405"}
+                    }
             
-            # Ensure existing metadata entries have vid
-            for key, poly_data in metadata_dict.items():
-                if "vid" not in poly_data and "_" in key:
-                    poly_data["vid"] = key.split("_")[0]
+            file_dict = new_file_dict
+            metadata_dict = new_metadata_dict
             
             # Update attribute with all classes (loaded + new)
             if "1" not in attribute_dict:
@@ -953,11 +1000,30 @@ def merge_annotations(annotation_files, image_dir, output_path):
             new_key = f"{new_fid}_{rand}"
             merged_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
 
+    # Keep only files that have polygons, re-key sequentially
+    fids_with_polygons = {m["vid"] for m in merged_metadata.values()}
+    fid_remap = {}
+    final_file = {}
+    new_idx = 1
+    for old_fid, info in sorted(merged_file.items(), key=lambda x: int(x[0])):
+        if old_fid not in fids_with_polygons:
+            continue
+        new_fid = str(new_idx)
+        new_idx += 1
+        fid_remap[old_fid] = new_fid
+        final_file[new_fid] = {"fid": new_fid, "fname": info["fname"]}
+    final_metadata = {}
+    for key, meta in merged_metadata.items():
+        new_fid = fid_remap[meta["vid"]]
+        rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        new_key = f"{new_fid}_{rand}"
+        final_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
+
     output = {
         "project": {"pname": project_name},
         "attribute": {"1": {"options": merged_options}},
-        "file": merged_file,
-        "metadata": merged_metadata,
+        "file": final_file,
+        "metadata": final_metadata,
     }
     with open(output_path, "w") as f:
         json.dump(output, f, indent=4)
