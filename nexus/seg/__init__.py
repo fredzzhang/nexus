@@ -1,3 +1,4 @@
 from .polygon_annotation import PolygonAnnotationWithReference, polygon_annotation_with_reference, merge_annotations
 from .generate_masks import load_annotations, generate_masks
 from .visualise_masks import visualise_one, visualise_directory
+from .summarise_annotations import summarise
