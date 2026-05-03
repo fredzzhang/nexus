@@ -59,7 +59,7 @@ def summarise(annotation_path, image_dir, class_map=None):
 
     bg_count = len(annotated_fids - fids_with_defects)
 
-    header = f"{'Class':<10} {'Name':<35} {'Images':>8} {'Avg area (%)':>14}"
+    header = f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg area (%)':>14}"
     print(header)
     print("-" * len(header))
     for cid in sorted(class_map):
@@ -70,7 +70,7 @@ def summarise(annotation_path, image_dir, class_map=None):
         print(f"{cid:<10} {name:<35} {n:>8} {avg:>13.2f}%")
     print(f"{'bg':<10} {BACKGROUND_LABEL:<35} {bg_count:>8} {'N/A':>14}")
     print("-" * len(header))
-    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8}")
+    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8}\n")
 
 
 if __name__ == "__main__":
