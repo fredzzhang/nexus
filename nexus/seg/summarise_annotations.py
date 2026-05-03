@@ -11,6 +11,7 @@ from collections import defaultdict
 
 from .generate_masks import DEFAULT_CLASS_MAP, load_annotations
 
+DEFAULT_CLASSES = list(DEFAULT_CLASS_MAP.keys())
 BACKGROUND_LABEL = "Background"
 
 
@@ -30,11 +31,12 @@ def _get_image_size(image_dir, fname):
     return h * w
 
 
-def summarise(annotation_path, image_dir, class_map=None):
-    if class_map is None:
-        class_map = DEFAULT_CLASS_MAP
+def summarise(annotation_path, image_dir, classes=None):
+    if classes is None:
+        classes = DEFAULT_CLASSES
 
-    fid_to_fname, file_annotations, annotated_fids = load_annotations(annotation_path, class_map)
+    class_filter = {cid: 0 for cid in classes}
+    fid_to_fname, file_annotations, annotated_fids = load_annotations(annotation_path, class_filter)
     class_names = _load_class_names(annotation_path)
 
     # Cache image sizes
@@ -62,7 +64,7 @@ def summarise(annotation_path, image_dir, class_map=None):
     header = f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg area (%)':>14}"
     print(header)
     print("-" * len(header))
-    for cid in sorted(class_map):
+    for cid in sorted(classes):
         images = class_image_ratios[cid]
         n = len(images)
         avg = sum(images.values()) / n * 100 if n else 0
@@ -77,9 +79,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="summarise annotation statistics")
     parser.add_argument("annotation", help="Path to annotation JSON file")
     parser.add_argument("image_dir", help="Directory containing source images")
-    parser.add_argument("-m", "--class-map", default=None,
-                        help='Class-to-pixel mapping as JSON, e.g. \'{"401": 2, "403": 4}\'')
+    parser.add_argument("-c", "--classes", default=None,
+                        help='Class IDs as JSON list, e.g. \'["401", "403"]\'')
     args = parser.parse_args()
 
-    class_map = json.loads(args.class_map) if args.class_map else None
-    summarise(args.annotation, args.image_dir, class_map)
+    classes = json.loads(args.classes) if args.classes else None
+    summarise(args.annotation, args.image_dir, classes)
