@@ -115,6 +115,8 @@ class PolygonAnnotationWithReference:
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Revert", command=self.revert_annotations).pack(side=tk.LEFT)
+        self.show_original_btn = tk.Button(control_frame, text="Show Original", command=self.toggle_show_original)
+        self.show_original_btn.pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -144,6 +146,7 @@ class PolygonAnnotationWithReference:
         self._saved_annotations = {}
         self._saved_labels = {}
         self.edit_mode = False
+        self.showing_original = False
         self.selected_polygon_idx = None
         self.selected_vertex_idx = None
         self.vertex_handles = []
@@ -450,6 +453,17 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("temp")
         self.current_polygon = []
         self.restore_annotations()
+    
+    def toggle_show_original(self):
+        self.showing_original = not self.showing_original
+        if self.showing_original:
+            self.show_original_btn.config(relief=tk.SUNKEN, text="Show Annotations")
+            self.canvas.delete("polygon")
+            self.canvas.delete("vertex_handle")
+            self.canvas.delete("temp")
+        else:
+            self.show_original_btn.config(relief=tk.RAISED, text="Show Original")
+            self.restore_annotations()
     
     def delete_polygon(self, event):
         if event.widget != self.canvas:
