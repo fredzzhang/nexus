@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from .generate_masks import DEFAULT_CLASS_MAP, load_annotations
 
-DEFAULT_CLASSES = list(DEFAULT_CLASS_MAP.keys())
+DEFAULT_THRESHOLDS = {cid: 0.0 for cid in DEFAULT_CLASS_MAP}
 BACKGROUND_LABEL = "Background"
 
 
@@ -31,11 +31,22 @@ def _get_image_size(image_dir, fname):
     return h * w
 
 
-def summarise(annotation_path, image_dir, classes=None):
-    if classes is None:
-        classes = DEFAULT_CLASSES
+def summarise(annotation_path, image_dir, thresholds=None):
+    """Print per-class image counts and average defect area ratios.
 
-    class_filter = {cid: 0 for cid in classes}
+    Args:
+        annotation_path: Path to the annotation JSON file.
+        image_dir: Directory containing source images.
+        thresholds: Dict mapping class ID strings to minimum area ratio
+            thresholds (between 0 and 1). The keys define which classes
+            to report on. Annotations whose per-image area ratio falls
+            below the threshold are excluded from the filtered columns.
+            Defaults to DEFAULT_THRESHOLDS.
+    """
+    if thresholds is None:
+        thresholds = DEFAULT_THRESHOLDS
+
+    class_filter = {cid: 0 for cid in thresholds}
     fid_to_fname, file_annotations, annotated_fids = load_annotations(annotation_path, class_filter)
     class_names = _load_class_names(annotation_path)
 
@@ -61,27 +72,41 @@ def summarise(annotation_path, image_dir, classes=None):
 
     bg_count = len(annotated_fids - fids_with_defects)
 
-    header = f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg area (%)':>14}"
+    header = (f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg (%)':>9}"
+              f" | {'Thresh':>6} {'Filtered':>8} {'Avg (%)':>9}")
     print(header)
     print("-" * len(header))
-    for cid in sorted(classes):
-        images = class_image_ratios[cid]
-        n = len(images)
-        avg = sum(images.values()) / n * 100 if n else 0
+    filtered_defect_fids = set()
+    for cid in sorted(thresholds):
+        ratios = class_image_ratios[cid]
+        n = len(ratios)
+        avg = sum(ratios.values()) / n * 100 if n else 0
+        thresh = thresholds[cid]
+        filtered = {fid: r for fid, r in ratios.items() if r >= thresh}
+        nf = len(filtered)
+        avgf = sum(filtered.values()) / nf * 100 if nf else 0
+        filtered_defect_fids.update(filtered)
         name = class_names.get(cid, "Unknown")
-        print(f"{cid:<10} {name:<35} {n:>8} {avg:>13.2f}%")
-    print(f"{'bg':<10} {BACKGROUND_LABEL:<35} {bg_count:>8} {'N/A':>14}")
+        thresh_str = f"{thresh * 100:.1f}%"
+        print(f"{cid:<10} {name:<35} {n:>8} {avg:>8.2f}%"
+              f" | {thresh_str:>6} {nf:>8} {avgf:>8.2f}%")
+    filtered_bg = len(annotated_fids - filtered_defect_fids)
+    print(f"{'bg':<10} {BACKGROUND_LABEL:<35} {bg_count:>8} {'N/A':>9}"
+          f" | {'':>6} {filtered_bg:>8} {'N/A':>9}")
     print("-" * len(header))
-    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8}\n")
+    total_filtered = len(filtered_defect_fids) + filtered_bg
+    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8}"
+          f"           | {'':>6} {total_filtered:>8}\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="summarise annotation statistics")
     parser.add_argument("annotation", help="Path to annotation JSON file")
     parser.add_argument("image_dir", help="Directory containing source images")
-    parser.add_argument("-c", "--classes", default=None,
-                        help='Class IDs as JSON list, e.g. \'["401", "403"]\'')
+    parser.add_argument("-t", "--thresholds", default=None,
+                        help='Class IDs and min area ratio (0-1) as JSON, '
+                             'e.g. \'{"401": 0.005, "402": 0.01, "403": 0.002}\'')
     args = parser.parse_args()
 
-    classes = json.loads(args.classes) if args.classes else None
-    summarise(args.annotation, args.image_dir, classes)
+    thresholds = {k: float(v) for k, v in json.loads(args.thresholds).items()} if args.thresholds else None
+    summarise(args.annotation, args.image_dir, thresholds=thresholds)
