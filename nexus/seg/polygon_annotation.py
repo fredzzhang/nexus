@@ -1136,8 +1136,7 @@ def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin
                 ['*_cam0.jpg', '*_cam1.jpg', '*_cam2.jpg']
 
             If None, all images are annotation targets with no references.
-        autosave_interval: Interval in minutes between automatic saves
-            (default 5).
+        autosave_interval: Interval in minutes between automatic saves (default 5).
     """
     root = tk.Tk()
     root.geometry(res)
