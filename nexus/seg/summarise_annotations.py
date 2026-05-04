@@ -72,8 +72,8 @@ def summarise(annotation_path, image_dir, thresholds=None):
 
     bg_count = len(annotated_fids - fids_with_defects)
 
-    header = (f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg (%)':>9}"
-              f" | {'Thresh':>6} {'Filtered':>8} {'Avg (%)':>9}")
+    header = (f"\n{'Class':<10} {'Name':<35} {'Images':>8} {'Avg area (%)':>14}"
+              f" | {'Thresh':>6} {'Filtered':>8} {'Avg area (%)':>14}")
     print(header)
     print("-" * len(header))
     filtered_defect_fids = set()
@@ -88,15 +88,15 @@ def summarise(annotation_path, image_dir, thresholds=None):
         filtered_defect_fids.update(filtered)
         name = class_names.get(cid, "Unknown")
         thresh_str = f"{thresh * 100:.1f}%"
-        print(f"{cid:<10} {name:<35} {n:>8} {avg:>8.2f}%"
-              f" | {thresh_str:>6} {nf:>8} {avgf:>8.2f}%")
+        print(f"{cid:<10} {name:<35} {n:>8} {avg:>13.2f}%"
+              f" | {thresh_str:>6} {nf:>8} {avgf:>13.2f}%")
     filtered_bg = len(annotated_fids - filtered_defect_fids)
-    print(f"{'bg':<10} {BACKGROUND_LABEL:<35} {bg_count:>8} {'N/A':>9}"
-          f" | {'':>6} {filtered_bg:>8} {'N/A':>9}")
+    print(f"{'bg':<10} {BACKGROUND_LABEL:<35} {bg_count:>8} {'N/A':>14}"
+          f" | {'':>6} {filtered_bg:>8} {'N/A':>14}")
     print("-" * len(header))
     total_filtered = len(filtered_defect_fids) + filtered_bg
-    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8}"
-          f"           | {'':>6} {total_filtered:>8}\n")
+    print(f"{'Total':<10} {'':<35} {len(annotated_fids):>8} {'':>14}"
+          f" | {'':>6} {total_filtered:>8}\n")
 
 
 if __name__ == "__main__":
