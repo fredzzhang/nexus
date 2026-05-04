@@ -7,9 +7,13 @@ import json
 import copy
 import random
 import string
+import tempfile
 import tkinter as tk
+from datetime import datetime
 from PIL import Image, ImageTk, ImageDraw
 from tkinter import filedialog, messagebox, ttk
+
+AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "polygon_annotation_autosave.json")
 
 BASE_DATA = {
     "project": {"pname": ""},
@@ -59,6 +63,9 @@ class PolygonAnnotationWithReference:
             ``001_cam2.jpg`` (references) share the stem ``001``.
             If None, all images in the directory are treated as annotation
             targets with no reference images.
+        autosave_interval: Interval in minutes between automatic saves
+            (default 5). The auto-save is written to a temporary file and
+            removed after a successful manual save.
 
     Controls:
         - Left-click: Add polygon vertex (click near first point to close).
@@ -68,7 +75,7 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
@@ -150,12 +157,17 @@ class PolygonAnnotationWithReference:
         self.selected_polygon_idx = None
         self.selected_vertex_idx = None
         self.vertex_handles = []
+        self._loaded_annotation_path = None
+        self._autosave_interval = autosave_interval * 60 * 1000
+        self._autosave_id = None
         
         self.canvas.bind("<Button-1>", self.add_point)
         self.canvas.bind("<Button-3>", self.close_polygon)
         self.canvas.bind("<Double-Button-1>", self.delete_polygon)
         
         self.load_base_classes()
+        self._check_autosave()
+        self._schedule_autosave()
     
     @staticmethod
     def _parse_pattern(pattern):
@@ -779,6 +791,7 @@ class PolygonAnnotationWithReference:
         
         path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
         if path:
+            self._loaded_annotation_path = path
             with open(path, "r") as f:
                 data = json.load(f)
             
@@ -874,6 +887,44 @@ class PolygonAnnotationWithReference:
         dialog.wait_window()
         return result[0]
     
+    def _build_save_data(self, project_name=""):
+        """Build the annotation JSON dict from current state."""
+        attribute_dict = {}
+        if self.loaded_data:
+            attribute_dict = self.loaded_data.get("attribute", {})
+        if "1" not in attribute_dict:
+            attribute_dict["1"] = {"options": {}}
+        attribute_dict["1"]["options"].update({idx: name for name, idx in self.classes.items()})
+
+        file_dict = {}
+        metadata_dict = {}
+        next_fid = 1
+        for img_path, polygons in self.all_annotations.items():
+            if not polygons:
+                continue
+            fname = os.path.basename(img_path)
+            file_id = str(next_fid)
+            next_fid += 1
+            file_dict[file_id] = {"fid": file_id, "fname": fname}
+            for poly_idx, polygon in enumerate(polygons):
+                rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                coords = [2]
+                for x, y in polygon:
+                    coords.extend([int(x), int(y)])
+                poly_key = (img_path, poly_idx)
+                class_idx = self.polygon_labels.get(poly_key, "405")
+                metadata_dict[f"{file_id}_{rand}"] = {
+                    "vid": file_id,
+                    "xy": coords,
+                    "av": {"1": class_idx if class_idx else "405"}
+                }
+        return {
+            "project": {"pname": project_name},
+            "attribute": attribute_dict,
+            "file": file_dict,
+            "metadata": metadata_dict,
+        }
+
     def save_annotations(self):
         self.save_current_annotations()
         
@@ -887,68 +938,110 @@ class PolygonAnnotationWithReference:
         
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
         if path:
-            if self.loaded_data:
-                output = self.loaded_data.copy()
-                file_dict = output.get("file", {})
-                metadata_dict = output.get("metadata", {})
-                attribute_dict = output.get("attribute", {})
-            else:
-                output = {}
-                file_dict = {}
-                metadata_dict = {}
-                attribute_dict = {}
-            
-            # Build new file and metadata dicts with sequential keys
-            new_file_dict = {}
-            new_metadata_dict = {}
-            next_fid = 1
-            
-            for img_path, polygons in self.all_annotations.items():
-                if not polygons:
-                    continue
-                fname = os.path.basename(img_path)
-                file_id = str(next_fid)
-                next_fid += 1
-                new_file_dict[file_id] = {"fid": file_id, "fname": fname}
-                
-                for poly_idx, polygon in enumerate(polygons):
-                    random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                    key = f"{file_id}_{random_str}"
-                    
-                    coords = [2]
-                    for i in range(len(polygon)):
-                        x, y = polygon[i]
-                        coords.extend([int(x), int(y)])
-                    
-                    poly_key = (img_path, poly_idx)
-                    class_idx = self.polygon_labels.get(poly_key, "405")
-                    
-                    new_metadata_dict[key] = {
-                        "vid": file_id,
-                        "xy": coords,
-                        "av": {"1": class_idx if class_idx else "405"}
-                    }
-            
-            file_dict = new_file_dict
-            metadata_dict = new_metadata_dict
-            
-            # Update attribute with all classes (loaded + new)
-            if "1" not in attribute_dict:
-                attribute_dict["1"] = {"options": {}}
-            attribute_dict["1"]["options"].update({idx: name for name, idx in self.classes.items()})
-            
-            # Update project name
-            if "project" not in output:
-                output["project"] = {}
-            output["project"]["pname"] = project_name
-            
-            output["file"] = file_dict
-            output["attribute"] = attribute_dict
-            output["metadata"] = metadata_dict
-            
+            output = self._build_save_data(project_name)
             with open(path, "w") as f:
                 json.dump(output, f, indent=4)
-            messagebox.showinfo("Saved", f"Annotations for {len(file_dict)} image(s) saved to {path}")
+            # Remove autosave after successful manual save
+            if os.path.exists(AUTOSAVE_PATH):
+                os.remove(AUTOSAVE_PATH)
+            messagebox.showinfo("Saved", f"Annotations for {len(output['file'])} image(s) saved to {path}")
+
+    def _schedule_autosave(self):
+        self._autosave_id = self.root.after(self._autosave_interval, self._autosave)
+
+    def _autosave(self):
+        self.save_current_annotations()
+        if self.all_annotations and any(polys for polys in self.all_annotations.values()):
+            output = self._build_save_data()
+            output["_session"] = {
+                "image_dir": self.directory or "",
+                "annotation_path": self._loaded_annotation_path or "",
+                "asin": self._asin or "",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "current_index": self.current_index,
+            }
+            with open(AUTOSAVE_PATH, "w") as f:
+                json.dump(output, f, indent=4)
+        self._schedule_autosave()
+
+    def _check_autosave(self):
+        if not os.path.exists(AUTOSAVE_PATH):
+            return
+        try:
+            with open(AUTOSAVE_PATH, "r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            os.remove(AUTOSAVE_PATH)
+            return
+        session = data.get("_session", {})
+        msg = (
+            "An auto-saved session was found:\n\n"
+            f"  Image directory: {session.get('image_dir', 'N/A')}\n"
+            f"  Annotation file: {session.get('annotation_path', 'N/A') or 'None'}\n"
+            f"  ASIN: {session.get('asin', 'N/A')}\n"
+            f"  Time: {session.get('time', 'N/A')}\n\n"
+            "Would you like to restore it?"
+        )
+        if not messagebox.askyesno("Restore Auto-Save", msg):
+            os.remove(AUTOSAVE_PATH)
+            return
+        # Restore session
+        directory = session.get("image_dir", "")
+        if directory and os.path.isdir(directory):
+            self.directory = directory
+            all_files = sorted(f for f in os.listdir(directory)
+                               if f.lower().endswith(('.png', '.jpg', '.jpeg')))
+            if self._name_format:
+                ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
+                self.image_files = [os.path.join(directory, f) for f in all_files
+                                    if self._match_pattern(f, ann_prefix, ann_suffix)]
+            else:
+                self.image_files = [os.path.join(directory, f) for f in all_files]
+            self.image_files.sort()
+            if self.image_files:
+                filenames = [f"{i+1}: {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
+                self.file_dropdown['values'] = filenames
+        # Load annotations from autosave
+        self._loaded_annotation_path = session.get("annotation_path") or None
+        file_dict = data.get("file", {})
+        metadata_dict = data.get("metadata", {})
+        attribute_dict = data.get("attribute", {})
+        if "1" in attribute_dict and "options" in attribute_dict["1"]:
+            all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
+            if self._asin:
+                asin_lower = self._asin.lower()
+                self.classes = {name: idx for name, idx in all_classes.items()
+                               if name.lower().startswith(asin_lower + " - ")}
+            else:
+                self.classes = all_classes
+            self.class_dropdown['values'] = list(self.classes.keys())
+            self.update_class_buttons()
+        loaded_annotations = {}
+        self.polygon_labels = {}
+        for file_id, file_info in file_dict.items():
+            fname = file_info["fname"]
+            img_path = os.path.join(self.directory, fname) if self.directory else fname
+            if self.directory and os.path.exists(img_path):
+                polygons = []
+                poly_idx = 0
+                for key, poly_data in metadata_dict.items():
+                    if key.startswith(f"{file_id}_"):
+                        coords = poly_data["xy"]
+                        polygon = [(coords[i], coords[i+1]) for i in range(1, len(coords), 2)]
+                        polygons.append(polygon)
+                        if "av" in poly_data and "1" in poly_data["av"]:
+                            self.polygon_labels[(img_path, poly_idx)] = poly_data["av"]["1"]
+                        poly_idx += 1
+                loaded_annotations[img_path] = polygons
+        self.all_annotations = loaded_annotations
+        self._saved_annotations = copy.deepcopy(loaded_annotations)
+        self._saved_labels = copy.deepcopy(self.polygon_labels)
+        data.pop("_session", None)
+        self.loaded_data = data
+        if self.image_files:
+            self.current_index = min(session.get("current_index", 0), len(self.image_files) - 1)
+            self.load_current_image()
+        os.remove(AUTOSAVE_PATH)
 
 def merge_annotations(annotation_files, image_dir, output_path):
     """Combine multiple annotation files, keeping only entries whose images exist.
@@ -1028,7 +1121,7 @@ def merge_annotations(annotation_files, image_dir, output_path):
     with open(output_path, "w") as f:
         json.dump(output, f, indent=4)
 
-def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None):
+def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1043,11 +1136,17 @@ def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin
                 ['*_cam0.jpg', '*_cam1.jpg', '*_cam2.jpg']
 
             If None, all images are annotation targets with no references.
+        autosave_interval: Interval in minutes between automatic saves
+            (default 5).
     """
     root = tk.Tk()
     root.geometry(res)
-    root.protocol("WM_DELETE_WINDOW", root.destroy)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval)
+    def on_close():
+        if app._autosave_id is not None:
+            root.after_cancel(app._autosave_id)
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
 
 if __name__ == "__main__":
