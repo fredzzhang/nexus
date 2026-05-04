@@ -1043,7 +1043,7 @@ class PolygonAnnotationWithReference:
             self.load_current_image()
         os.remove(AUTOSAVE_PATH)
 
-def merge_annotations(annotation_files, image_dir, output_path):
+def merge_annotations(annotation_files, image_dir, output_path, thresholds=None):
     """Combine multiple annotation files, keeping only entries whose images exist.
 
     Args:
@@ -1051,7 +1051,12 @@ def merge_annotations(annotation_files, image_dir, output_path):
         image_dir: Directory containing images. Only annotations whose
             ``fname`` is found in this directory are kept.
         output_path: Path to write the merged JSON file.
+        thresholds: Optional dict passed to
+            :func:`~nexus.seg.summarise_annotations.summarise` to print
+            a summary of the merged annotations. If None, the default
+            thresholds are used.
     """
+    from .summarise_annotations import summarise
     existing_images = set(os.listdir(image_dir))
     merged_file = {}
     merged_metadata = {}
@@ -1120,6 +1125,8 @@ def merge_annotations(annotation_files, image_dir, output_path):
     }
     with open(output_path, "w") as f:
         json.dump(output, f, indent=4)
+
+    summarise(output_path, image_dir, thresholds=thresholds)
 
 def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
     """Launch the polygon annotation tool.
