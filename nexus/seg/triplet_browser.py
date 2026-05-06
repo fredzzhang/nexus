@@ -116,38 +116,53 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, background, foreground=No
 
 def load_triplet_data(image_dir, gt_dir, pred_dir, gt_background, gt_foreground,
                       pred_background, pred_foreground):
-    """Load metadata for all triplets (matched by filename stem)."""
+    """Load metadata for all entries (matched by filename stem).
+
+    GT and pred directories are optional (may be None or empty string).
+    Entries are included if the image has at least one matching mask.
+    """
     image_lookup = {}
     for f in os.listdir(image_dir):
         if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
             image_lookup[os.path.splitext(f)[0]] = os.path.join(image_dir, f)
 
     gt_lookup = {}
-    for f in os.listdir(gt_dir):
-        if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
-            gt_lookup[os.path.splitext(f)[0]] = os.path.join(gt_dir, f)
+    if gt_dir:
+        for f in os.listdir(gt_dir):
+            if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
+                gt_lookup[os.path.splitext(f)[0]] = os.path.join(gt_dir, f)
 
     pred_lookup = {}
-    for f in os.listdir(pred_dir):
-        if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
-            pred_lookup[os.path.splitext(f)[0]] = os.path.join(pred_dir, f)
+    if pred_dir:
+        for f in os.listdir(pred_dir):
+            if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
+                pred_lookup[os.path.splitext(f)[0]] = os.path.join(pred_dir, f)
 
     gt_skip = _skip_values(gt_background, gt_foreground)
     pred_skip = _skip_values(pred_background, pred_foreground)
 
-    # Only include stems present in all three
-    stems = sorted(set(image_lookup) & set(gt_lookup) & set(pred_lookup))
+    # Include stems that have at least one mask available
+    mask_stems = set(gt_lookup) | set(pred_lookup)
+    stems = sorted(set(image_lookup) & mask_stems)
     triplets = []
     for stem in stems:
-        gt_mask = cv2.imread(gt_lookup[stem], cv2.IMREAD_GRAYSCALE)
-        pred_mask = cv2.imread(pred_lookup[stem], cv2.IMREAD_GRAYSCALE)
-        gt_classes = set(np.unique(gt_mask)) - gt_skip if gt_mask is not None else set()
-        pred_classes = set(np.unique(pred_mask)) - pred_skip if pred_mask is not None else set()
+        gt_path = gt_lookup.get(stem)
+        pred_path = pred_lookup.get(stem)
+        gt_classes = set()
+        pred_classes = set()
+        if gt_path:
+            gt_mask = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
+            if gt_mask is not None:
+                gt_classes = set(np.unique(gt_mask)) - gt_skip
+        if pred_path:
+            pred_mask = cv2.imread(pred_path, cv2.IMREAD_GRAYSCALE)
+            if pred_mask is not None:
+                pred_classes = set(np.unique(pred_mask)) - pred_skip
         triplets.append({
             'stem': stem,
             'image_path': image_lookup[stem],
-            'gt_path': gt_lookup[stem],
-            'pred_path': pred_lookup[stem],
+            'gt_path': gt_path,
+            'pred_path': pred_path,
             'gt_classes': gt_classes,
             'pred_classes': pred_classes,
         })
@@ -374,8 +389,11 @@ class CompareApp:
         image_dir = self.image_dir_var.get()
         gt_dir = self.gt_dir_var.get()
         pred_dir = self.pred_dir_var.get()
-        if not all([image_dir, gt_dir, pred_dir]):
-            self.status_var.set("Please specify all three directories")
+        if not image_dir:
+            self.status_var.set("Please specify the image directory")
+            return
+        if not gt_dir and not pred_dir:
+            self.status_var.set("Please specify at least one mask directory (GT or Pred)")
             return
         self.status_var.set("Loading...")
         self.root.update()
@@ -433,27 +451,32 @@ class CompareApp:
             return
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-        gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
-        pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
+        # Build panels: always show original, then GT/Pred if available
+        panels = [(img_rgb, "Original")]
 
-        gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map, self.label_map,
-                                      self.gt_background, self.gt_foreground)
-        pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map, self.label_map,
-                                       self.pred_background, self.pred_foreground)
+        if triplet['gt_path']:
+            gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
+            if gt_mask is not None:
+                gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map, self.label_map,
+                                             self.gt_background, self.gt_foreground)
+                panels.append((gt_overlay, "Ground Truth"))
+
+        if triplet['pred_path']:
+            pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
+            if pred_mask is not None:
+                pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map, self.label_map,
+                                              self.pred_background, self.pred_foreground)
+                panels.append((pred_overlay, "Prediction"))
 
         # Resize for display
         h, w = img_rgb.shape[:2]
         scale = DISPLAY_WIDTH / w
         new_h = int(h * scale)
 
-        panels = []
-        for arr, title in [(img_rgb, "Original"), (gt_overlay, "Ground Truth"), (pred_overlay, "Prediction")]:
-            pil = Image.fromarray(arr).resize((DISPLAY_WIDTH, new_h), Image.LANCZOS)
-            panels.append((pil, title))
-
         row = ttk.Frame(frame)
         row.pack()
-        for pil, title in panels:
+        for arr, title in panels:
+            pil = Image.fromarray(arr).resize((DISPLAY_WIDTH, new_h), Image.LANCZOS)
             col = ttk.Frame(row)
             col.pack(side=tk.LEFT, padx=2)
             ttk.Label(col, text=title, font=("TkDefaultFont", 9, "bold")).pack()
