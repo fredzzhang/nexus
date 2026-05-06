@@ -2,3 +2,4 @@ from .polygon_annotation import PolygonAnnotationWithReference, polygon_annotati
 from .generate_masks import load_annotations, generate_masks
 from .visualise_masks import visualise_one, visualise_directory
 from .summarise_annotations import summarise
+from .triplet_browser import segmentation_diagnosis
