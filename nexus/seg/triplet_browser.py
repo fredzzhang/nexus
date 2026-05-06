@@ -196,7 +196,11 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, foreground=None, alpha=AL
         y = padding
         for colour, lbl in entries:
             draw.rectangle([padding, y, padding + swatch, y + swatch], fill=colour)
-            draw.text((padding * 2 + swatch, y), lbl, fill=(255, 255, 255), font=font)
+            tx, ty = padding * 2 + swatch, y
+            # Black outline
+            for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
+                draw.text((tx+dx, ty+dy), lbl, fill=(0, 0, 0), font=font)
+            draw.text((tx, ty), lbl, fill=(255, 255, 255), font=font)
             y += line_height
 
     return np.array(pil_img), present
