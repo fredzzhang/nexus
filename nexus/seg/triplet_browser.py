@@ -32,6 +32,8 @@ DISPLAY_WIDTH = 350  # Width per panel in the triplet
 LEGEND_FONT_SCALE = 0.04   # Font size relative to image width
 LEGEND_SWATCH_SCALE = 0.04  # Swatch size relative to image width
 LEGEND_PADDING_SCALE = 0.02  # Padding relative to image width
+# Tolerance for floating-point comparison in secondary class evaluation
+FLOAT_EPS = 1e-9
 
 
 def _defect_classes(mask, colour_map, foreground):
@@ -43,6 +45,92 @@ def _defect_classes(mask, colour_map, foreground):
     """
     present = set(np.unique(mask))
     return present & set(colour_map.keys())
+
+
+def _compute_area_ratios(mask, colour_map, foreground):
+    """Compute area ratio for each class in colour_map.
+
+    Returns a dict mapping pixel value -> ratio (float).
+    Order follows sorted colour_map keys.
+    """
+    if foreground is not None:
+        denom = np.count_nonzero(mask == foreground)
+        for pv in colour_map:
+            denom += np.count_nonzero(mask == pv)
+    else:
+        denom = mask.shape[0] * mask.shape[1]
+    denom = max(denom, 1)
+    return {pv: np.count_nonzero(mask == pv) / denom for pv in sorted(colour_map)}
+
+
+def _compare(value, threshold, op):
+    """Compare value against threshold using the given operator string.
+
+    Uses FLOAT_EPS tolerance for equality checks to avoid floating-point
+    precision issues.
+
+    Supported operators: '>', '<', '==', '>=', '<='.
+    """
+    if op == '>':
+        return value > threshold + FLOAT_EPS
+    elif op == '<':
+        return value < threshold - FLOAT_EPS
+    elif op == '==':
+        return abs(value - threshold) <= FLOAT_EPS
+    elif op == '>=':
+        return value > threshold - FLOAT_EPS
+    elif op == '<=':
+        return value < threshold + FLOAT_EPS
+    return False
+
+
+def _evaluate_secondary_classes(mask, colour_map, foreground, secondary_classes):
+    """Evaluate which secondary classes a mask belongs to.
+
+    Args:
+        mask: Grayscale mask array.
+        colour_map: Dict mapping pixel values to colours.
+        foreground: Foreground pixel value (or None).
+        secondary_classes: Dict defining secondary classes. Format:
+            {
+                'Grade C': {
+                    'thresholds': [0, 0.05, 0],
+                    'comparisons': ['>', '>=', '>'],
+                    'aggregation': 'or',
+                    'complement': 'Grade A',
+                },
+            }
+
+    Returns:
+        Set of secondary class names that this mask satisfies.
+    """
+    if not secondary_classes:
+        return set()
+
+    ratios = _compute_area_ratios(mask, colour_map, foreground)
+    ratio_list = [ratios[pv] for pv in sorted(colour_map)]
+    result = set()
+
+    for name, defn in secondary_classes.items():
+        thresholds = defn['thresholds']
+        comparisons = defn['comparisons']
+        aggregation = defn['aggregation']
+        complement = defn.get('complement')
+
+        checks = [_compare(r, t, op)
+                  for r, t, op in zip(ratio_list, thresholds, comparisons)]
+
+        if aggregation == 'or':
+            matches = any(checks)
+        else:  # 'and'
+            matches = all(checks)
+
+        if matches:
+            result.add(name)
+        elif complement:
+            result.add(complement)
+
+    return result
 
 
 def overlay_mask(img_rgb, mask, colour_map, label_map, foreground=None, alpha=ALPHA):
@@ -115,7 +203,7 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, foreground=None, alpha=AL
 
 
 def load_triplet_data(image_dir, gt_dir, pred_dir, colour_map,
-                      gt_foreground, pred_foreground):
+                      gt_foreground, pred_foreground, secondary_classes=None):
     """Load metadata for all entries (matched by filename stem).
 
     GT and pred directories are optional (may be None or empty string).
@@ -147,14 +235,20 @@ def load_triplet_data(image_dir, gt_dir, pred_dir, colour_map,
         pred_path = pred_lookup.get(stem)
         gt_classes = set()
         pred_classes = set()
+        gt_secondary = set()
+        pred_secondary = set()
         if gt_path:
             gt_mask = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
             if gt_mask is not None:
                 gt_classes = _defect_classes(gt_mask, colour_map, gt_foreground)
+                gt_secondary = _evaluate_secondary_classes(
+                    gt_mask, colour_map, gt_foreground, secondary_classes)
         if pred_path:
             pred_mask = cv2.imread(pred_path, cv2.IMREAD_GRAYSCALE)
             if pred_mask is not None:
                 pred_classes = _defect_classes(pred_mask, colour_map, pred_foreground)
+                pred_secondary = _evaluate_secondary_classes(
+                    pred_mask, colour_map, pred_foreground, secondary_classes)
         triplets.append({
             'stem': stem,
             'image_path': image_lookup[stem],
@@ -162,6 +256,8 @@ def load_triplet_data(image_dir, gt_dir, pred_dir, colour_map,
             'pred_path': pred_path,
             'gt_classes': gt_classes,
             'pred_classes': pred_classes,
+            'gt_secondary': gt_secondary,
+            'pred_secondary': pred_secondary,
         })
     return triplets
 
@@ -273,7 +369,8 @@ class CompareApp:
     """
     def __init__(self, root, colour_map=None, label_map=None,
                  gt_foreground=DEFAULT_GT_FOREGROUND,
-                 pred_foreground=DEFAULT_PRED_FOREGROUND):
+                 pred_foreground=DEFAULT_PRED_FOREGROUND,
+                 secondary_classes=None):
         self.root = root
         self.root.title("Mask Comparison Viewer")
         self.root.geometry("1200x800")
@@ -281,6 +378,7 @@ class CompareApp:
         self.label_map = dict(label_map or DEFAULT_LABEL_MAP)
         self.gt_foreground = gt_foreground
         self.pred_foreground = pred_foreground
+        self.secondary_classes = secondary_classes or {}
         self.triplets = []
         self.filtered = []
         self.photo_refs = []  # prevent GC
@@ -310,14 +408,14 @@ class CompareApp:
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
-        class_options = ["Any"] + list(self.label_map.values())
+        class_options = self._get_filter_options()
         ttk.Label(toolbar, text="GT has:").pack(side=tk.LEFT)
-        self.filter_gt_class = ttk.Combobox(toolbar, values=class_options, width=8, state="readonly")
+        self.filter_gt_class = ttk.Combobox(toolbar, values=class_options, width=10, state="readonly")
         self.filter_gt_class.set("Any")
         self.filter_gt_class.pack(side=tk.LEFT, padx=2)
 
         ttk.Label(toolbar, text="Pred has:").pack(side=tk.LEFT)
-        self.filter_pred_class = ttk.Combobox(toolbar, values=class_options, width=8, state="readonly")
+        self.filter_pred_class = ttk.Combobox(toolbar, values=class_options, width=10, state="readonly")
         self.filter_pred_class.set("Any")
         self.filter_pred_class.pack(side=tk.LEFT, padx=2)
 
@@ -372,11 +470,21 @@ class CompareApp:
         if d:
             self.pred_dir_var.set(d)
 
+    def _get_filter_options(self):
+        """Build the list of filter options: primary classes + secondary classes."""
+        options = ["Any"] + list(self.label_map.values())
+        for name, defn in self.secondary_classes.items():
+            options.append(name)
+            complement = defn.get('complement')
+            if complement:
+                options.append(complement)
+        return options
+
     def _open_settings(self):
         dlg = SettingsDialog(self.root, self.colour_map, self.label_map)
         if dlg.result:
             self.colour_map, self.label_map = dlg.result
-            class_options = ["Any"] + list(self.label_map.values())
+            class_options = self._get_filter_options()
             self.filter_gt_class['values'] = class_options
             self.filter_gt_class.set("Any")
             self.filter_pred_class['values'] = class_options
@@ -398,7 +506,8 @@ class CompareApp:
         self.root.update()
         self.triplets = load_triplet_data(image_dir, gt_dir, pred_dir,
                                             self.colour_map,
-                                            self.gt_foreground, self.pred_foreground)
+                                            self.gt_foreground, self.pred_foreground,
+                                            self.secondary_classes)
         self.filtered = self.triplets
         self.status_var.set(f"{len(self.triplets)} triplet(s) found")
         self._render()
@@ -407,20 +516,38 @@ class CompareApp:
         gt_name = self.filter_gt_class.get()
         pred_name = self.filter_pred_class.get()
 
-        gt_val = None if gt_name == "Any" else next(
-            (k for k, v in self.label_map.items() if v == gt_name), None)
-        pred_val = None if pred_name == "Any" else next(
-            (k for k, v in self.label_map.items() if v == pred_name), None)
+        # Determine if filter is a primary class, secondary class, or "Any"
+        primary_labels_inv = {v: k for k, v in self.label_map.items()}
+        all_secondary_names = set()
+        for name, defn in self.secondary_classes.items():
+            all_secondary_names.add(name)
+            if defn.get('complement'):
+                all_secondary_names.add(defn['complement'])
 
         self.filtered = []
         for t in self.triplets:
-            gt_match = (gt_val is None) or (gt_val in t['gt_classes'])
-            pred_match = (pred_val is None) or (pred_val in t['pred_classes'])
+            gt_match = self._matches_filter(gt_name, t['gt_classes'], t['gt_secondary'],
+                                           primary_labels_inv, all_secondary_names)
+            pred_match = self._matches_filter(pred_name, t['pred_classes'], t['pred_secondary'],
+                                             primary_labels_inv, all_secondary_names)
             if gt_match and pred_match:
                 self.filtered.append(t)
 
         self.status_var.set(f"Showing {len(self.filtered)}/{len(self.triplets)} triplet(s)")
         self._render()
+
+    def _matches_filter(self, filter_name, primary_classes, secondary_classes,
+                        primary_labels_inv, all_secondary_names):
+        """Check if a triplet matches a filter selection."""
+        if filter_name == "Any":
+            return True
+        if filter_name in all_secondary_names:
+            return filter_name in secondary_classes
+        # Primary class lookup
+        pv = primary_labels_inv.get(filter_name)
+        if pv is not None:
+            return pv in primary_classes
+        return False
 
     def _reset_filter(self):
         self.filter_gt_class.set("Any")
@@ -486,7 +613,8 @@ class CompareApp:
 
 def segmentation_diagnosis(colour_map=None, label_map=None,
                            gt_foreground=DEFAULT_GT_FOREGROUND,
-                           pred_foreground=DEFAULT_PRED_FOREGROUND):
+                           pred_foreground=DEFAULT_PRED_FOREGROUND,
+                           secondary_classes=None):
     """Launch the mask comparison GUI.
 
     This is the main entry point for the triplet browser tool.
@@ -506,10 +634,26 @@ def segmentation_diagnosis(colour_map=None, label_map=None,
             (denominator is total image area).
         pred_foreground: Pixel value for generic foreground in prediction
             masks. Same behaviour as gt_foreground. Defaults to None.
+        secondary_classes: Optional dict defining secondary classes for
+            filtering. These are derived from area ratios and do not
+            appear in visualisations. Format:
+            {
+                'Lena': {
+                    'thresholds': [0, 0.05, 0],
+                    'comparisons': ['>', '>=', '>'],
+                    'aggregation': 'or',
+                    'complement': 'Not Lena',
+                },
+            }
+            Each entry defines a class and optionally its complement.
+            Thresholds and comparisons are ordered by sorted colour_map
+            keys. Comparisons: '>', '<', '==', '>=', '<='. Aggregation:
+            'or' (any passes) or 'and' (all pass).
     """
     root = tk.Tk()
     CompareApp(root, colour_map=colour_map, label_map=label_map,
-               gt_foreground=gt_foreground, pred_foreground=pred_foreground)
+               gt_foreground=gt_foreground, pred_foreground=pred_foreground,
+               secondary_classes=secondary_classes)
     root.mainloop()
 
 
