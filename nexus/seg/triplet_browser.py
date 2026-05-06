@@ -280,15 +280,17 @@ class SettingsDialog(tk.Toplevel):
     as a tuple (colour_map, label_map). If the dialog is cancelled,
     `self.result` remains None.
     """
-    def __init__(self, parent, colour_map, label_map):
+    def __init__(self, parent, colour_map, label_map, secondary_classes=None):
         super().__init__(parent)
         self.title("Class Settings")
         self.colour_map = dict(colour_map)
         self.label_map = dict(label_map)
+        self.secondary_classes = dict(secondary_classes or {})
         self.result = None
         self.grab_set()
 
-        ttk.Label(self, text="Configure classes (pixel value → label & colour):").pack(padx=10, pady=5)
+        # --- Primary classes ---
+        ttk.Label(self, text="Primary classes (pixel value → label & colour):").pack(padx=10, pady=5)
 
         self.entries_frame = ttk.Frame(self)
         self.entries_frame.pack(padx=10, pady=5, fill=tk.X)
@@ -301,6 +303,22 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Add Class", command=self._add_new).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Remove Last", command=self._remove_last).pack(side=tk.LEFT, padx=5)
 
+        # --- Secondary classes ---
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(self, text="Secondary classes (derived from area ratios):").pack(padx=10, pady=5)
+
+        self.sec_frame = ttk.Frame(self)
+        self.sec_frame.pack(padx=10, pady=5, fill=tk.X)
+        self.sec_rows = []
+        for name, defn in self.secondary_classes.items():
+            self._add_sec_row(name, defn)
+
+        sec_btn_frame = ttk.Frame(self)
+        sec_btn_frame.pack(pady=5)
+        ttk.Button(sec_btn_frame, text="Add Secondary", command=self._add_sec_new).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sec_btn_frame, text="Remove Last Secondary", command=self._remove_sec_last).pack(side=tk.LEFT, padx=5)
+
+        # --- OK / Cancel ---
         action_frame = ttk.Frame(self)
         action_frame.pack(pady=10)
         ttk.Button(action_frame, text="OK", command=self._ok).pack(side=tk.LEFT, padx=5)
@@ -340,6 +358,60 @@ class SettingsDialog(tk.Toplevel):
             if children:
                 children[-1].destroy()
 
+    def _add_sec_row(self, name="", defn=None):
+        """Add an editable row for a secondary class definition."""
+        if defn is None:
+            n_classes = len(self.colour_map)
+            defn = {
+                'thresholds': [0.0] * n_classes,
+                'comparisons': ['>'] * n_classes,
+                'aggregation': 'or',
+                'complement': '',
+            }
+        frame = ttk.LabelFrame(self.sec_frame, text="Secondary class")
+        frame.pack(fill=tk.X, pady=3)
+
+        # Name and complement
+        top = ttk.Frame(frame)
+        top.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(top, text="Name:").pack(side=tk.LEFT)
+        name_var = tk.StringVar(value=name)
+        ttk.Entry(top, textvariable=name_var, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Label(top, text="Complement:").pack(side=tk.LEFT, padx=(10, 0))
+        comp_var = tk.StringVar(value=defn.get('complement', ''))
+        ttk.Entry(top, textvariable=comp_var, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Label(top, text="Aggregation:").pack(side=tk.LEFT, padx=(10, 0))
+        agg_var = tk.StringVar(value=defn['aggregation'])
+        ttk.Combobox(top, textvariable=agg_var, values=['or', 'and'], width=4,
+                     state='readonly').pack(side=tk.LEFT, padx=2)
+
+        # Per-class thresholds and comparisons
+        thresh_vars = []
+        comp_op_vars = []
+        sorted_keys = sorted(self.colour_map.keys())
+        for i, pv in enumerate(sorted_keys):
+            row = ttk.Frame(frame)
+            row.pack(fill=tk.X, padx=15, pady=1)
+            lbl = self.label_map.get(pv, str(pv))
+            ttk.Label(row, text=f"{lbl}:", width=12).pack(side=tk.LEFT)
+            op_var = tk.StringVar(value=defn['comparisons'][i] if i < len(defn['comparisons']) else '>')
+            ttk.Combobox(row, textvariable=op_var, values=['>', '<', '==', '>=', '<='],
+                         width=4, state='readonly').pack(side=tk.LEFT, padx=2)
+            t_var = tk.StringVar(value=str(defn['thresholds'][i] if i < len(defn['thresholds']) else 0.0))
+            ttk.Entry(row, textvariable=t_var, width=8).pack(side=tk.LEFT, padx=2)
+            comp_op_vars.append(op_var)
+            thresh_vars.append(t_var)
+
+        self.sec_rows.append((frame, name_var, comp_var, agg_var, thresh_vars, comp_op_vars))
+
+    def _add_sec_new(self):
+        self._add_sec_row()
+
+    def _remove_sec_last(self):
+        if self.sec_rows:
+            frame, *_ = self.sec_rows.pop()
+            frame.destroy()
+
     def _ok(self):
         self.colour_map = {}
         self.label_map = {}
@@ -352,7 +424,29 @@ class SettingsDialog(tk.Toplevel):
             rgb = tuple(int(hex_c[i:i+2], 16) for i in (0, 2, 4))
             self.colour_map[pv] = rgb
             self.label_map[pv] = lbl_var.get()
-        self.result = (self.colour_map, self.label_map)
+
+        # Parse secondary classes
+        self.secondary_classes = {}
+        for _, name_var, comp_var, agg_var, thresh_vars, comp_op_vars in self.sec_rows:
+            name = name_var.get().strip()
+            if not name:
+                continue
+            thresholds = []
+            for tv in thresh_vars:
+                try:
+                    thresholds.append(float(tv.get()))
+                except ValueError:
+                    thresholds.append(0.0)
+            comparisons = [ov.get() for ov in comp_op_vars]
+            complement = comp_var.get().strip() or None
+            self.secondary_classes[name] = {
+                'thresholds': thresholds,
+                'comparisons': comparisons,
+                'aggregation': agg_var.get(),
+                'complement': complement,
+            }
+
+        self.result = (self.colour_map, self.label_map, self.secondary_classes)
         self.destroy()
 
 
@@ -501,9 +595,9 @@ class CompareApp:
         return options
 
     def _open_settings(self):
-        dlg = SettingsDialog(self.root, self.colour_map, self.label_map)
+        dlg = SettingsDialog(self.root, self.colour_map, self.label_map, self.secondary_classes)
         if dlg.result:
-            self.colour_map, self.label_map = dlg.result
+            self.colour_map, self.label_map, self.secondary_classes = dlg.result
             class_options = self._get_filter_options()
             self.filter_gt_class['values'] = class_options
             self.filter_gt_class.set("Any")
