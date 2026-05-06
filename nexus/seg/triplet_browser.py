@@ -23,9 +23,7 @@ DEFAULT_LABEL_MAP = {
     3: "Overripe",
     4: "Mould",
 }
-DEFAULT_GT_BACKGROUND = 255
 DEFAULT_GT_FOREGROUND = None  # None means foreground class doesn't exist
-DEFAULT_PRED_BACKGROUND = 255
 DEFAULT_PRED_FOREGROUND = None
 ALPHA = 0.5
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg'}
@@ -36,15 +34,18 @@ LEGEND_SWATCH_SCALE = 0.04  # Swatch size relative to image width
 LEGEND_PADDING_SCALE = 0.02  # Padding relative to image width
 
 
-def _skip_values(background, foreground):
-    """Return the set of pixel values to skip (background + foreground)."""
-    skip = {background}
-    if foreground is not None:
-        skip.add(foreground)
-    return skip
+def _defect_classes(mask, colour_map, foreground):
+    """Return the set of defect classes present in a mask.
+
+    Defect classes are pixel values that exist in both the mask and the
+    colour_map. Foreground and background (anything not in colour_map)
+    are excluded.
+    """
+    present = set(np.unique(mask))
+    return present & set(colour_map.keys())
 
 
-def overlay_mask(img_rgb, mask, colour_map, label_map, background, foreground=None, alpha=ALPHA):
+def overlay_mask(img_rgb, mask, colour_map, label_map, foreground=None, alpha=ALPHA):
     """Overlay mask on image and return RGB numpy array with legend.
 
     Args:
@@ -52,10 +53,10 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, background, foreground=No
         mask: Single-channel mask (pixel values are class IDs).
         colour_map: Dict mapping pixel values to RGB colour tuples.
         label_map: Dict mapping pixel values to label strings.
-        background: Pixel value treated as background (skipped).
         foreground: Pixel value treated as generic foreground (skipped
-            in overlay/legend but used as denominator for area ratio).
-            If None, total image area is used as denominator.
+            in overlay/legend). When specified, the denominator for
+            area ratio is foreground + defect pixels. When None, the
+            denominator is total image area.
         alpha: Overlay opacity.
 
     Returns:
@@ -72,13 +73,12 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, background, foreground=No
     pil_img = Image.fromarray(blended)
     draw = ImageDraw.Draw(pil_img)
     img_w = img_rgb.shape[1]
-    skip = _skip_values(background, foreground)
-    present = set(np.unique(mask_resized)) - skip
+    present = set(np.unique(mask_resized)) & set(colour_map.keys())
 
-    # Denominator: foreground area if foreground class exists, else total pixels
+    # Denominator: when foreground is specified, use foreground + defect pixels.
+    # When foreground is None, use total image area.
     if foreground is not None:
         denom = np.count_nonzero(mask_resized == foreground)
-        # Include defect pixels too (they are part of the fruit)
         for pv in colour_map:
             denom += np.count_nonzero(mask_resized == pv)
     else:
@@ -114,8 +114,8 @@ def overlay_mask(img_rgb, mask, colour_map, label_map, background, foreground=No
     return np.array(pil_img), present
 
 
-def load_triplet_data(image_dir, gt_dir, pred_dir, gt_background, gt_foreground,
-                      pred_background, pred_foreground):
+def load_triplet_data(image_dir, gt_dir, pred_dir, colour_map,
+                      gt_foreground, pred_foreground):
     """Load metadata for all entries (matched by filename stem).
 
     GT and pred directories are optional (may be None or empty string).
@@ -138,9 +138,6 @@ def load_triplet_data(image_dir, gt_dir, pred_dir, gt_background, gt_foreground,
             if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
                 pred_lookup[os.path.splitext(f)[0]] = os.path.join(pred_dir, f)
 
-    gt_skip = _skip_values(gt_background, gt_foreground)
-    pred_skip = _skip_values(pred_background, pred_foreground)
-
     # Include stems that have at least one mask available
     mask_stems = set(gt_lookup) | set(pred_lookup)
     stems = sorted(set(image_lookup) & mask_stems)
@@ -153,11 +150,11 @@ def load_triplet_data(image_dir, gt_dir, pred_dir, gt_background, gt_foreground,
         if gt_path:
             gt_mask = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
             if gt_mask is not None:
-                gt_classes = set(np.unique(gt_mask)) - gt_skip
+                gt_classes = _defect_classes(gt_mask, colour_map, gt_foreground)
         if pred_path:
             pred_mask = cv2.imread(pred_path, cv2.IMREAD_GRAYSCALE)
             if pred_mask is not None:
-                pred_classes = set(np.unique(pred_mask)) - pred_skip
+                pred_classes = _defect_classes(pred_mask, colour_map, pred_foreground)
         triplets.append({
             'stem': stem,
             'image_path': image_lookup[stem],
@@ -275,16 +272,14 @@ class CompareApp:
             Defaults to DEFAULT_LABEL_MAP.
     """
     def __init__(self, root, colour_map=None, label_map=None,
-                 gt_background=DEFAULT_GT_BACKGROUND, gt_foreground=DEFAULT_GT_FOREGROUND,
-                 pred_background=DEFAULT_PRED_BACKGROUND, pred_foreground=DEFAULT_PRED_FOREGROUND):
+                 gt_foreground=DEFAULT_GT_FOREGROUND,
+                 pred_foreground=DEFAULT_PRED_FOREGROUND):
         self.root = root
         self.root.title("Mask Comparison Viewer")
         self.root.geometry("1200x800")
         self.colour_map = dict(colour_map or DEFAULT_COLOUR_MAP)
         self.label_map = dict(label_map or DEFAULT_LABEL_MAP)
-        self.gt_background = gt_background
         self.gt_foreground = gt_foreground
-        self.pred_background = pred_background
         self.pred_foreground = pred_foreground
         self.triplets = []
         self.filtered = []
@@ -402,8 +397,8 @@ class CompareApp:
         self.status_var.set("Loading...")
         self.root.update()
         self.triplets = load_triplet_data(image_dir, gt_dir, pred_dir,
-                                            self.gt_background, self.gt_foreground,
-                                            self.pred_background, self.pred_foreground)
+                                            self.colour_map,
+                                            self.gt_foreground, self.pred_foreground)
         self.filtered = self.triplets
         self.status_var.set(f"{len(self.triplets)} triplet(s) found")
         self._render()
@@ -461,14 +456,14 @@ class CompareApp:
             gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
             if gt_mask is not None:
                 gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map, self.label_map,
-                                             self.gt_background, self.gt_foreground)
+                                             self.gt_foreground)
                 panels.append((gt_overlay, "Ground Truth"))
 
         if triplet['pred_path']:
             pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
             if pred_mask is not None:
                 pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map, self.label_map,
-                                              self.pred_background, self.pred_foreground)
+                                              self.pred_foreground)
                 panels.append((pred_overlay, "Prediction"))
 
         # Resize for display
@@ -490,9 +485,7 @@ class CompareApp:
 
 
 def segmentation_diagnosis(colour_map=None, label_map=None,
-                           gt_background=DEFAULT_GT_BACKGROUND,
                            gt_foreground=DEFAULT_GT_FOREGROUND,
-                           pred_background=DEFAULT_PRED_BACKGROUND,
                            pred_foreground=DEFAULT_PRED_FOREGROUND):
     """Launch the mask comparison GUI.
 
@@ -506,21 +499,17 @@ def segmentation_diagnosis(colour_map=None, label_map=None,
         label_map: Optional dict mapping mask pixel values to
             human-readable label strings (e.g. {2: "Decay"}).
             Defaults to DEFAULT_LABEL_MAP if not provided.
-        gt_background: Pixel value for background in GT masks.
-            Defaults to 255.
         gt_foreground: Pixel value for generic foreground in GT masks.
             If not None, this class is skipped in overlay/legend and
             the foreground area (foreground + defect pixels) is used
-            as the denominator for area ratio. Defaults to None.
-        pred_background: Pixel value for background in prediction masks.
-            Defaults to 255.
+            as the denominator for area ratio. Defaults to None
+            (denominator is total image area).
         pred_foreground: Pixel value for generic foreground in prediction
             masks. Same behaviour as gt_foreground. Defaults to None.
     """
     root = tk.Tk()
     CompareApp(root, colour_map=colour_map, label_map=label_map,
-               gt_background=gt_background, gt_foreground=gt_foreground,
-               pred_background=pred_background, pred_foreground=pred_foreground)
+               gt_foreground=gt_foreground, pred_foreground=pred_foreground)
     root.mainloop()
 
 
