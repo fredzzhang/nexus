@@ -315,15 +315,16 @@ class CompareApp:
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
-        ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT)
-        self.filter_source = ttk.Combobox(toolbar, values=["GT", "Pred", "Either"], width=5, state="readonly")
-        self.filter_source.set("GT")
-        self.filter_source.pack(side=tk.LEFT, padx=2)
+        class_options = ["Any"] + list(self.label_map.values())
+        ttk.Label(toolbar, text="GT has:").pack(side=tk.LEFT)
+        self.filter_gt_class = ttk.Combobox(toolbar, values=class_options, width=8, state="readonly")
+        self.filter_gt_class.set("Any")
+        self.filter_gt_class.pack(side=tk.LEFT, padx=2)
 
-        ttk.Label(toolbar, text="has").pack(side=tk.LEFT)
-        self.filter_class = ttk.Combobox(toolbar, values=["Any"] + list(self.label_map.values()), width=8, state="readonly")
-        self.filter_class.set("Any")
-        self.filter_class.pack(side=tk.LEFT, padx=2)
+        ttk.Label(toolbar, text="Pred has:").pack(side=tk.LEFT)
+        self.filter_pred_class = ttk.Combobox(toolbar, values=class_options, width=8, state="readonly")
+        self.filter_pred_class.set("Any")
+        self.filter_pred_class.pack(side=tk.LEFT, padx=2)
 
         ttk.Button(toolbar, text="Apply", command=self._apply_filter).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self._reset_filter).pack(side=tk.LEFT, padx=2)
@@ -380,8 +381,11 @@ class CompareApp:
         dlg = SettingsDialog(self.root, self.colour_map, self.label_map)
         if dlg.result:
             self.colour_map, self.label_map = dlg.result
-            self.filter_class['values'] = ["Any"] + list(self.label_map.values())
-            self.filter_class.set("Any")
+            class_options = ["Any"] + list(self.label_map.values())
+            self.filter_gt_class['values'] = class_options
+            self.filter_gt_class.set("Any")
+            self.filter_pred_class['values'] = class_options
+            self.filter_pred_class.set("Any")
             if self.triplets:
                 self._load()  # reload with new maps
 
@@ -405,28 +409,27 @@ class CompareApp:
         self._render()
 
     def _apply_filter(self):
-        cls_name = self.filter_class.get()
-        source = self.filter_source.get()
-        if cls_name == "Any":
-            self.filtered = self.triplets
-        else:
-            cls_val = next((k for k, v in self.label_map.items() if v == cls_name), None)
-            if cls_val is None:
-                self.filtered = self.triplets
-            else:
-                self.filtered = []
-                for t in self.triplets:
-                    if source == "GT" and cls_val in t['gt_classes']:
-                        self.filtered.append(t)
-                    elif source == "Pred" and cls_val in t['pred_classes']:
-                        self.filtered.append(t)
-                    elif source == "Either" and (cls_val in t['gt_classes'] or cls_val in t['pred_classes']):
-                        self.filtered.append(t)
+        gt_name = self.filter_gt_class.get()
+        pred_name = self.filter_pred_class.get()
+
+        gt_val = None if gt_name == "Any" else next(
+            (k for k, v in self.label_map.items() if v == gt_name), None)
+        pred_val = None if pred_name == "Any" else next(
+            (k for k, v in self.label_map.items() if v == pred_name), None)
+
+        self.filtered = []
+        for t in self.triplets:
+            gt_match = (gt_val is None) or (gt_val in t['gt_classes'])
+            pred_match = (pred_val is None) or (pred_val in t['pred_classes'])
+            if gt_match and pred_match:
+                self.filtered.append(t)
+
         self.status_var.set(f"Showing {len(self.filtered)}/{len(self.triplets)} triplet(s)")
         self._render()
 
     def _reset_filter(self):
-        self.filter_class.set("Any")
+        self.filter_gt_class.set("Any")
+        self.filter_pred_class.set("Any")
         self.filtered = self.triplets
         self.status_var.set(f"Showing {len(self.filtered)}/{len(self.triplets)} triplet(s)")
         self._render()
