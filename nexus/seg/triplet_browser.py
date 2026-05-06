@@ -382,6 +382,7 @@ class CompareApp:
         self.secondary_classes = secondary_classes or {}
         self.triplets = []
         self.filtered = []
+        self.bookmarks = set()  # set of bookmarked stems
         self.photo_refs = []  # prevent GC
 
         self._build_toolbar()
@@ -432,6 +433,7 @@ class CompareApp:
 
         ttk.Button(toolbar, text="Apply", command=self._apply_filter).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self._reset_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="★ Bookmarked", command=self._show_bookmarked).pack(side=tk.LEFT, padx=5)
 
         self.status_var = tk.StringVar(value="No data loaded")
         ttk.Label(toolbar, textvariable=self.status_var).pack(side=tk.RIGHT)
@@ -567,6 +569,17 @@ class CompareApp:
         self.status_var.set(f"Showing {len(self.filtered)}/{len(self.triplets)} triplet(s)")
         self._render()
 
+    def _show_bookmarked(self):
+        self.filtered = [t for t in self.triplets if t['stem'] in self.bookmarks]
+        self.status_var.set(f"Showing {len(self.filtered)} bookmarked triplet(s)")
+        self._render()
+
+    def _toggle_bookmark(self, stem):
+        if stem in self.bookmarks:
+            self.bookmarks.discard(stem)
+        else:
+            self.bookmarks.add(stem)
+
     def _render(self):
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
@@ -580,6 +593,12 @@ class CompareApp:
     def _render_triplet(self, triplet, index):
         frame = ttk.LabelFrame(self.inner_frame, text=f"[{index+1}] {triplet['stem']}")
         frame.pack(fill=tk.X, padx=5, pady=3)
+
+        # Bookmark checkbox
+        bk_var = tk.BooleanVar(value=triplet['stem'] in self.bookmarks)
+        bk_cb = ttk.Checkbutton(frame, text="Bookmark", variable=bk_var,
+                                command=lambda s=triplet['stem']: self._toggle_bookmark(s))
+        bk_cb.pack(anchor=tk.W, padx=5)
 
         img_bgr = cv2.imread(triplet['image_path'])
         if img_bgr is None:
