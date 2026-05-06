@@ -370,7 +370,8 @@ class CompareApp:
     def __init__(self, root, colour_map=None, label_map=None,
                  gt_foreground=DEFAULT_GT_FOREGROUND,
                  pred_foreground=DEFAULT_PRED_FOREGROUND,
-                 secondary_classes=None):
+                 secondary_classes=None,
+                 image_dir=None, gt_dir=None, pred_dir=None):
         self.root = root
         self.root.title("Mask Comparison Viewer")
         self.root.geometry("1200x800")
@@ -386,6 +387,16 @@ class CompareApp:
         self._build_toolbar()
         self._build_canvas()
         self.root.bind("<Key>", self._on_key)
+
+        # Pre-fill directories and auto-load if provided
+        if image_dir:
+            self.image_dir_var.set(image_dir)
+        if gt_dir:
+            self.gt_dir_var.set(gt_dir)
+        if pred_dir:
+            self.pred_dir_var.set(pred_dir)
+        if image_dir and (gt_dir or pred_dir):
+            self._load()
 
     def _build_toolbar(self):
         toolbar = ttk.Frame(self.root)
@@ -614,7 +625,8 @@ class CompareApp:
 def segmentation_diagnosis(colour_map=None, label_map=None,
                            gt_foreground=DEFAULT_GT_FOREGROUND,
                            pred_foreground=DEFAULT_PRED_FOREGROUND,
-                           secondary_classes=None):
+                           secondary_classes=None,
+                           image_dir=None, gt_dir=None, pred_dir=None):
     """Launch the mask comparison GUI.
 
     This is the main entry point for the triplet browser tool.
@@ -638,22 +650,28 @@ def segmentation_diagnosis(colour_map=None, label_map=None,
             filtering. These are derived from area ratios and do not
             appear in visualisations. Format:
             {
-                'Lena': {
+                'Grade C': {
                     'thresholds': [0, 0.05, 0],
                     'comparisons': ['>', '>=', '>'],
                     'aggregation': 'or',
-                    'complement': 'Not Lena',
+                    'complement': 'Grade A',
                 },
             }
             Each entry defines a class and optionally its complement.
             Thresholds and comparisons are ordered by sorted colour_map
             keys. Comparisons: '>', '<', '==', '>=', '<='. Aggregation:
             'or' (any passes) or 'and' (all pass).
+        image_dir: Optional path to the image directory. If provided
+            along with at least one mask directory, images are loaded
+            automatically on startup.
+        gt_dir: Optional path to the ground truth mask directory.
+        pred_dir: Optional path to the predicted mask directory.
     """
     root = tk.Tk()
     CompareApp(root, colour_map=colour_map, label_map=label_map,
                gt_foreground=gt_foreground, pred_foreground=pred_foreground,
-               secondary_classes=secondary_classes)
+               secondary_classes=secondary_classes,
+               image_dir=image_dir, gt_dir=gt_dir, pred_dir=pred_dir)
     root.mainloop()
 
 
