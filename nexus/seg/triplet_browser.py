@@ -7,6 +7,8 @@ navigation.
 Fred Zhang <fredzz@amazon.com>
 """
 import os
+import base64
+from io import BytesIO
 import tkinter as tk
 from tkinter import ttk, filedialog, simpledialog, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
@@ -438,6 +440,7 @@ class CompareApp:
         ttk.Button(toolbar, text="Apply", command=self._apply_filter).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self._reset_filter).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="★ Bookmarked", command=self._show_bookmarked).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Export HTML", command=self._export_html).pack(side=tk.LEFT, padx=2)
 
         self.status_var = tk.StringVar(value="No data loaded")
         ttk.Label(toolbar, textvariable=self.status_var).pack(side=tk.RIGHT)
@@ -583,6 +586,75 @@ class CompareApp:
             self.bookmarks.discard(stem)
         else:
             self.bookmarks.add(stem)
+
+    def _export_html(self):
+        """Export the currently displayed triplets to a self-contained HTML file."""
+        if not self.filtered:
+            self.status_var.set("Nothing to export")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export HTML", defaultextension=".html",
+            filetypes=[("HTML files", "*.html")])
+        if not path:
+            return
+
+        self.status_var.set("Exporting...")
+        self.root.update()
+
+        rows_html = []
+        for i, triplet in enumerate(self.filtered):
+            img_bgr = cv2.imread(triplet['image_path'])
+            if img_bgr is None:
+                continue
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+            panels = [(img_rgb, "Original")]
+            if triplet['gt_path']:
+                gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
+                if gt_mask is not None:
+                    gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map,
+                                                 self.label_map, self.gt_foreground)
+                    panels.append((gt_overlay, "Ground Truth"))
+            if triplet['pred_path']:
+                pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
+                if pred_mask is not None:
+                    pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map,
+                                                   self.label_map, self.pred_foreground)
+                    panels.append((pred_overlay, "Prediction"))
+
+            cells = []
+            for arr, title in panels:
+                pil = Image.fromarray(arr)
+                buf = BytesIO()
+                pil.save(buf, format='JPEG', quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                cells.append(
+                    f'<td style="text-align:center;padding:4px">'
+                    f'<b>{title}</b><br>'
+                    f'<img src="data:image/jpeg;base64,{b64}" style="max-width:350px">'
+                    f'</td>')
+
+            rows_html.append(
+                f'<tr><td colspan="{len(panels)}" style="padding:8px 4px;font-weight:bold">'
+                f'[{i+1}] {triplet["stem"]}</td></tr>'
+                f'<tr>{"" .join(cells)}</tr>')
+
+        html = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            '<title>Mask Comparison Export</title>'
+            '<style>body{font-family:sans-serif;margin:20px}'
+            'table{border-collapse:collapse;margin:auto}'
+            'tr:nth-child(4n+1){border-top:1px solid #ccc}</style>'
+            '</head><body>'
+            f'<h2>Mask Comparison ({len(self.filtered)} triplets)</h2>'
+            f'<table>{"" .join(rows_html)}</table>'
+            '</body></html>'
+        )
+
+        with open(path, 'w') as f:
+            f.write(html)
+
+        self.status_var.set(f"Exported {len(self.filtered)} triplet(s) to {os.path.basename(path)}")
 
     def _render(self):
         for widget in self.inner_frame.winfo_children():
