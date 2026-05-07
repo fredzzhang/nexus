@@ -10,7 +10,7 @@ import os
 import base64
 from io import BytesIO
 import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog, colorchooser
+from tkinter import ttk, filedialog, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import cv2
 import numpy as np
@@ -553,9 +553,26 @@ class CompareApp:
         self.inner_frame = ttk.Frame(self.canvas)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.inner_frame, anchor="nw")
 
-        self.inner_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.inner_frame.bind("<Configure>", self._on_inner_configure)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+        # Pagination state
+        self._page = 0
+        self._page_size = 20
+
+        # Page navigation bar
+        self._nav_frame = ttk.Frame(self.root)
+        self._nav_frame.pack(fill=tk.X, padx=5, pady=3)
+        self._prev_btn = ttk.Button(self._nav_frame, text="◀ Prev", command=self._prev_page)
+        self._prev_btn.pack(side=tk.LEFT, padx=5)
+        self._page_label = tk.StringVar(value="")
+        ttk.Label(self._nav_frame, textvariable=self._page_label).pack(side=tk.LEFT, padx=10)
+        self._next_btn = ttk.Button(self._nav_frame, text="Next ▶", command=self._next_page)
+        self._next_btn.pack(side=tk.LEFT, padx=5)
+
+    def _on_inner_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_resize(self, event):
         self.canvas.itemconfig(self.canvas_window, width=event.width)
@@ -568,6 +585,10 @@ class CompareApp:
             self.canvas.yview_moveto(0)
         elif event.keysym == "End":
             self.canvas.yview_moveto(1)
+        elif event.keysym == "Left":
+            self._prev_page()
+        elif event.keysym == "Right":
+            self._next_page()
 
     def _pick_image_dir(self):
         d = filedialog.askdirectory(title="Select Image Directory")
@@ -622,9 +643,50 @@ class CompareApp:
                                             self.colour_map,
                                             self.gt_foreground, self.pred_foreground,
                                             self.secondary_classes)
+        self._precompute_thumbnails()
         self.filtered = self.triplets
         self.status_var.set(f"{len(self.triplets)} triplet(s) found")
         self._render()
+
+    def _precompute_thumbnails(self):
+        """Pre-compute resized overlay thumbnails for all triplets."""
+        self._thumbnails = {}
+        total = len(self.triplets)
+        for idx, triplet in enumerate(self.triplets):
+            if idx % 20 == 0:
+                self.status_var.set(f"Processing thumbnails... {idx}/{total}")
+                self.root.update()
+
+            img_bgr = cv2.imread(triplet['image_path'])
+            if img_bgr is None:
+                self._thumbnails[triplet['stem']] = None
+                continue
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+            panels = [(img_rgb, "Original")]
+            if triplet['gt_path']:
+                gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
+                if gt_mask is not None:
+                    gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map,
+                                                 self.label_map, self.gt_foreground)
+                    panels.append((gt_overlay, "Ground Truth"))
+            if triplet['pred_path']:
+                pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
+                if pred_mask is not None:
+                    pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map,
+                                                   self.label_map, self.pred_foreground)
+                    panels.append((pred_overlay, "Prediction"))
+
+            h, w = img_rgb.shape[:2]
+            scale = DISPLAY_WIDTH / w
+            new_h = int(h * scale)
+
+            pil_panels = []
+            for arr, title in panels:
+                pil = Image.fromarray(arr).resize((DISPLAY_WIDTH, new_h), Image.LANCZOS)
+                pil_panels.append((pil, title))
+
+            self._thumbnails[triplet['stem']] = pil_panels
 
     def _apply_filter(self):
         gt_name = self.filter_gt_class.get()
@@ -751,14 +813,40 @@ class CompareApp:
         self.status_var.set(f"Exported {len(self.filtered)} triplet(s) to {os.path.basename(path)}")
 
     def _render(self):
+        self._page = 0
+        self._render_page()
+
+    def _render_page(self):
+        """Render the current page of triplets."""
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
         self.photo_refs.clear()
 
-        for i, t in enumerate(self.filtered):
-            self._render_triplet(t, i)
+        total = len(self.filtered)
+        start = self._page * self._page_size
+        end = min(start + self._page_size, total)
+
+        for i in range(start, end):
+            self._render_triplet(self.filtered[i], i)
+
+        # Update navigation
+        total_pages = max(1, (total + self._page_size - 1) // self._page_size)
+        self._page_label.set(f"Page {self._page + 1} / {total_pages}  ({start+1}–{end} of {total})")
+        self._prev_btn.state(['disabled'] if self._page == 0 else ['!disabled'])
+        self._next_btn.state(['disabled'] if end >= total else ['!disabled'])
 
         self.canvas.yview_moveto(0)
+        self.root.update_idletasks()
+
+    def _prev_page(self):
+        if self._page > 0:
+            self._page -= 1
+            self._render_page()
+
+    def _next_page(self):
+        if (self._page + 1) * self._page_size < len(self.filtered):
+            self._page += 1
+            self._render_page()
 
     def _render_triplet(self, triplet, index):
         frame = ttk.LabelFrame(self.inner_frame, text=f"[{index+1}] {triplet['stem']}")
@@ -770,38 +858,14 @@ class CompareApp:
                                 command=lambda s=triplet['stem']: self._toggle_bookmark(s))
         bk_cb.pack(anchor=tk.W, padx=5)
 
-        img_bgr = cv2.imread(triplet['image_path'])
-        if img_bgr is None:
+        pil_panels = self._thumbnails.get(triplet['stem'])
+        if pil_panels is None:
             ttk.Label(frame, text="Could not load image").pack()
             return
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-
-        # Build panels: always show original, then GT/Pred if available
-        panels = [(img_rgb, "Original")]
-
-        if triplet['gt_path']:
-            gt_mask = cv2.imread(triplet['gt_path'], cv2.IMREAD_GRAYSCALE)
-            if gt_mask is not None:
-                gt_overlay, _ = overlay_mask(img_rgb, gt_mask, self.colour_map, self.label_map,
-                                             self.gt_foreground)
-                panels.append((gt_overlay, "Ground Truth"))
-
-        if triplet['pred_path']:
-            pred_mask = cv2.imread(triplet['pred_path'], cv2.IMREAD_GRAYSCALE)
-            if pred_mask is not None:
-                pred_overlay, _ = overlay_mask(img_rgb, pred_mask, self.colour_map, self.label_map,
-                                              self.pred_foreground)
-                panels.append((pred_overlay, "Prediction"))
-
-        # Resize for display
-        h, w = img_rgb.shape[:2]
-        scale = DISPLAY_WIDTH / w
-        new_h = int(h * scale)
 
         row = ttk.Frame(frame)
         row.pack()
-        for arr, title in panels:
-            pil = Image.fromarray(arr).resize((DISPLAY_WIDTH, new_h), Image.LANCZOS)
+        for pil, title in pil_panels:
             col = ttk.Frame(row)
             col.pack(side=tk.LEFT, padx=2)
             ttk.Label(col, text=title, font=("TkDefaultFont", 9, "bold")).pack()
