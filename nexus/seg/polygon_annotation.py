@@ -1043,7 +1043,7 @@ class PolygonAnnotationWithReference:
             self.load_current_image()
         os.remove(AUTOSAVE_PATH)
 
-def merge_annotations(annotation_files, image_dir, output_path, thresholds=None):
+def merge_annotations(annotation_files, image_dir, output_path, thresholds=None, merge_strategy="keep_both"):
     """Combine multiple annotation files, keeping only entries whose images exist.
 
     Args:
@@ -1055,7 +1055,13 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None)
             :func:`~nexus.seg.summarise_annotations.summarise` to print
             a summary of the merged annotations. If None, the default
             thresholds are used.
+        merge_strategy: How to handle images annotated in multiple files.
+            ``"keep_both"`` (default) retains all polygons from every file.
+            ``"override"`` keeps only the polygons from the last file in
+            *annotation_files* that contains annotations for a given image.
     """
+    if merge_strategy not in ("keep_both", "override"):
+        raise ValueError(f"Unknown merge_strategy: {merge_strategy!r}")
     from .summarise_annotations import summarise
     existing_images = set(os.listdir(image_dir))
     merged_file = {}
@@ -1089,6 +1095,14 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None)
                 next_fid += 1
 
         # Re-key metadata under new fids
+        if merge_strategy == "override":
+            overridden_fids = set()
+            for key, meta in old_meta.items():
+                old_fid = meta.get("vid", key.split("_")[0])
+                if old_fid in old_fid_to_fname:
+                    overridden_fids.add(fname_to_fid[old_fid_to_fname[old_fid]])
+            merged_metadata = {k: v for k, v in merged_metadata.items() if v["vid"] not in overridden_fids}
+
         for key, meta in old_meta.items():
             old_fid = meta.get("vid", key.split("_")[0])
             if old_fid not in old_fid_to_fname:
