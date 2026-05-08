@@ -23,7 +23,7 @@ DEFAULT_LOOKBACK = 24
 DEFAULT_PATTERN = '*'
 
 
-def download_new_files(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_time=None, download_dir=DEFAULT_DOWNLOAD_DIR):
+def download_new_files(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_time=None, download_dir=DEFAULT_DOWNLOAD_DIR, download_last=None):
     """Download files from an S3 bucket that match a glob pattern and are newer than the cutoff time.
 
     Args:
@@ -32,6 +32,7 @@ def download_new_files(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_t
         pattern: Glob pattern to match filenames (e.g. '*.jpg', 'image_*').
         cutoff_time: Only download files modified after this datetime (UTC). None downloads all.
         download_dir: Local directory to save downloaded files.
+        download_last: If set, download only the last N matching files (by LastModified).
 
     Returns:
         Number of files downloaded.
@@ -42,7 +43,7 @@ def download_new_files(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_t
     paginator = s3.get_paginator('list_objects_v2')
     pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-    downloaded_count = 0
+    matching_objects = []
 
     for page in pages:
         if 'Contents' not in page:
@@ -57,13 +58,22 @@ def download_new_files(bucket_name, prefix='', pattern=DEFAULT_PATTERN, cutoff_t
             if cutoff_time and last_modified <= cutoff_time:
                 continue
 
-            local_path = os.path.join(download_dir, os.path.basename(key))
-            if os.path.exists(local_path):
-                continue
+            matching_objects.append(obj)
 
-            s3.download_file(bucket_name, key, local_path)
-            print(f"Downloaded: {key} -> {local_path}")
-            downloaded_count += 1
+    if download_last is not None:
+        matching_objects.sort(key=lambda o: o['LastModified'])
+        matching_objects = matching_objects[-download_last:]
+
+    downloaded_count = 0
+    for obj in matching_objects:
+        key = obj['Key']
+        local_path = os.path.join(download_dir, os.path.basename(key))
+        if os.path.exists(local_path):
+            continue
+
+        s3.download_file(bucket_name, key, local_path)
+        print(f"Downloaded: {key} -> {local_path}")
+        downloaded_count += 1
 
     return downloaded_count
 
@@ -80,7 +90,7 @@ def parse_s3_uri(s3_uri):
     return bucket, prefix
 
 
-def monitor_bucket(s3_uri, pattern=DEFAULT_PATTERN, lookback=DEFAULT_LOOKBACK, download_dir=DEFAULT_DOWNLOAD_DIR, interval=DEFAULT_INTERVAL):
+def monitor_bucket(s3_uri, pattern=DEFAULT_PATTERN, lookback=DEFAULT_LOOKBACK, download_dir=DEFAULT_DOWNLOAD_DIR, interval=DEFAULT_INTERVAL, download_last=None):
     """Continuously monitor an S3 bucket and download new matching files at regular intervals.
 
     Args:
@@ -89,18 +99,22 @@ def monitor_bucket(s3_uri, pattern=DEFAULT_PATTERN, lookback=DEFAULT_LOOKBACK, d
         lookback: Only download files created within the last N hours.
         download_dir: Local directory to save downloaded files.
         interval: Seconds between each check.
+        download_last: If set, download only the last N matching files instead of using lookback.
     """
     bucket_name, prefix = parse_s3_uri(s3_uri)
     print(f"Monitoring s3://{bucket_name}/{prefix}")
     print(f"File pattern: {pattern}")
-    print(f"Lookback: {lookback} hours")
+    if download_last is not None:
+        print(f"Download last: {download_last} files")
+    else:
+        print(f"Lookback: {lookback} hours")
     print(f"Download directory: {download_dir}")
     print(f"Check interval: {interval} seconds")
 
     while True:
         try:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=lookback)
-            count = download_new_files(bucket_name, prefix, pattern, cutoff_time, download_dir)
+            cutoff_time = None if download_last is not None else datetime.now(timezone.utc) - timedelta(hours=lookback)
+            count = download_new_files(bucket_name, prefix, pattern, cutoff_time, download_dir, download_last)
             if count > 0:
                 print(f"Downloaded {count} new files at {datetime.now()}")
             time.sleep(interval)
@@ -116,9 +130,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Monitor S3 bucket for new files')
     parser.add_argument('--s3-uri', default=os.getenv('S3_URI'), help='S3 URI (s3://bucket/prefix)')
     parser.add_argument('--pattern', default=os.getenv('S3_PATTERN', DEFAULT_PATTERN), help='Glob pattern to match filenames (default: *)')
-    parser.add_argument('--lookback', type=float, default=float(os.getenv('S3_LOOKBACK', DEFAULT_LOOKBACK)), help='Download files created within the last N hours (default: 24)')
     parser.add_argument('--download-dir', default=os.getenv('DOWNLOAD_DIR', DEFAULT_DOWNLOAD_DIR), help='Download directory (default: ./downloads)')
     parser.add_argument('--interval', type=int, default=int(os.getenv('S3_INTERVAL', DEFAULT_INTERVAL)), help='Check interval in seconds (default: 300)')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--lookback', type=float, default=float(os.getenv('S3_LOOKBACK', DEFAULT_LOOKBACK)), help='Download files created within the last N hours (default: 24)')
+    group.add_argument('--download-last', type=int, default=None, help='Download the last N matching files (mutually exclusive with --lookback)')
 
     args = parser.parse_args()
 
@@ -126,4 +143,4 @@ if __name__ == "__main__":
         print("Error: S3 URI required. Use --s3-uri or set S3_URI environment variable.")
         exit(1)
 
-    monitor_bucket(args.s3_uri, args.pattern, args.lookback, args.download_dir, args.interval)
+    monitor_bucket(args.s3_uri, args.pattern, args.lookback, args.download_dir, args.interval, args.download_last)
