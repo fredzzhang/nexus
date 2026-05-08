@@ -11,6 +11,9 @@ setup(
     packages=find_packages(),
     install_requires=[
         'boto3',
+        'numpy',
+        'opencv-python',
+        'Pillow',
     ],
     python_requires='>=3.9',
 )
