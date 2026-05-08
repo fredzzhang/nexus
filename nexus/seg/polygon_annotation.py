@@ -22,15 +22,11 @@ BASE_DATA = {
     "attribute": {
         "1": {
             "options": {
-                "0": "",
-                "400": "Strawberry - Package",
                 "401": "Strawberry - Decay",
                 "402": "Strawberry - Overripe/Wet bruising",
                 "403": "Strawberry - Mould",
                 "404": "Strawberry - Condensation",
-                "405": "Strawberry - BadInstance",
                 "406": "Strawberry - Instance Fully Visible",
-                "407": "Strawberry - Instance Partially Visible"
             }
         }
     },
