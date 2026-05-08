@@ -13,6 +13,8 @@ from datetime import datetime
 from PIL import Image, ImageTk, ImageDraw
 from tkinter import filedialog, messagebox, ttk
 
+from .generate_masks import generate_masks
+
 AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "polygon_annotation_autosave.json")
 
 BASE_DATA = {
@@ -20,15 +22,11 @@ BASE_DATA = {
     "attribute": {
         "1": {
             "options": {
-                "0": "",
-                "400": "Strawberry - Package",
                 "401": "Strawberry - Decay",
                 "402": "Strawberry - Overripe/Wet bruising",
                 "403": "Strawberry - Mould",
                 "404": "Strawberry - Condensation",
-                "405": "Strawberry - BadInstance",
                 "406": "Strawberry - Instance Fully Visible",
-                "407": "Strawberry - Instance Partially Visible"
             }
         }
     },
@@ -124,6 +122,7 @@ class PolygonAnnotationWithReference:
         tk.Button(control_frame, text="Revert", command=self.revert_annotations).pack(side=tk.LEFT)
         self.show_original_btn = tk.Button(control_frame, text="Show Original", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -946,6 +945,119 @@ class PolygonAnnotationWithReference:
                 os.remove(AUTOSAVE_PATH)
             messagebox.showinfo("Saved", f"Annotations for {len(output['file'])} image(s) saved to {path}")
 
+    def generate_masks_dialog(self):
+        if not self.directory:
+            messagebox.showwarning("No Directory", "Please load a directory first")
+            return
+        self.save_current_annotations()
+        if not self.all_annotations or all(not polys for polys in self.all_annotations.values()):
+            messagebox.showwarning("No Annotations", "No polygons to generate masks from")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Generate Masks")
+        dialog.geometry("550x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Output directory
+        tk.Label(dialog, text="Output Directory:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        output_var = tk.StringVar(value=self.directory.rstrip("/") + "_masks")
+        output_entry = tk.Entry(dialog, textvariable=output_var, width=40)
+        output_entry.grid(row=0, column=1, padx=5, pady=5)
+        tk.Button(dialog, text="Browse", command=lambda: output_var.set(
+            filedialog.askdirectory() or output_var.get())).grid(row=0, column=2, padx=5, pady=5)
+
+        # Default pixel value
+        tk.Label(dialog, text="Default Pixel Value:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        bg_var = tk.StringVar(value="255")
+        tk.Entry(dialog, textvariable=bg_var, width=10).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Class-to-pixel mapping
+        tk.Label(dialog, text="Class → Pixel Mapping (empty = use default):").grid(
+            row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(10, 0))
+
+        mapping_frame = tk.Frame(dialog)
+        mapping_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", padx=5, pady=5)
+
+        # Headers
+        tk.Label(mapping_frame, text="Class", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, padx=5)
+        tk.Label(mapping_frame, text="Index", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=1, padx=5)
+        tk.Label(mapping_frame, text="Pixel", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=2, padx=5)
+        tk.Label(mapping_frame, text="Empty", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=3, padx=5)
+
+        pixel_entries = {}
+        empty_vars = {}
+        for i, (name, idx) in enumerate(sorted(self.classes.items()), start=1):
+            tk.Label(mapping_frame, text=name).grid(row=i, column=0, sticky=tk.W, padx=5)
+            tk.Label(mapping_frame, text=idx).grid(row=i, column=1, padx=5)
+            pix_var = tk.StringVar(value="")
+            tk.Entry(mapping_frame, textvariable=pix_var, width=6).grid(row=i, column=2, padx=5)
+            pixel_entries[idx] = pix_var
+            empty_var = tk.BooleanVar(value=False)
+            tk.Checkbutton(mapping_frame, variable=empty_var).grid(row=i, column=3, padx=5)
+            empty_vars[idx] = empty_var
+
+        # Priority
+        tk.Label(dialog, text="Priority (comma-separated class indices, later = higher):").grid(
+            row=4, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(10, 0))
+        priority_var = tk.StringVar(value="")
+        tk.Entry(dialog, textvariable=priority_var, width=40).grid(
+            row=5, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
+        def on_generate():
+            output_dir = output_var.get().strip()
+            if not output_dir:
+                messagebox.showwarning("Missing", "Please specify an output directory", parent=dialog)
+                return
+            try:
+                background = int(bg_var.get().strip())
+            except ValueError:
+                messagebox.showwarning("Invalid", "Default pixel value must be an integer", parent=dialog)
+                return
+
+            # Build class_map from entries, skipping empty-checked classes
+            class_map = {}
+            for idx, pix_var in pixel_entries.items():
+                if empty_vars[idx].get():
+                    continue
+                val = pix_var.get().strip()
+                if val:
+                    try:
+                        class_map[idx] = int(val)
+                    except ValueError:
+                        messagebox.showwarning("Invalid", f"Pixel value for class {idx} must be an integer", parent=dialog)
+                        return
+
+            # Build priority
+            priority_str = priority_var.get().strip()
+            if priority_str:
+                priority = [p.strip() for p in priority_str.split(",")]
+            else:
+                priority = list(class_map.keys())
+
+            # Save current annotations to a temp file and generate masks
+            tmp_ann = os.path.join(tempfile.gettempdir(), "polygon_annotation_tmp_masks.json")
+            output_data = self._build_save_data()
+            with open(tmp_ann, "w") as f:
+                json.dump(output_data, f)
+            try:
+                generate_masks(tmp_ann, self.directory, output_dir,
+                              class_map=class_map, priority=priority, background=background)
+                messagebox.showinfo("Done", f"Masks saved to {output_dir}", parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to generate masks:\n{e}", parent=dialog)
+            finally:
+                if os.path.exists(tmp_ann):
+                    os.remove(tmp_ann)
+            dialog.destroy()
+
+        tk.Button(dialog, text="Generate", command=on_generate).grid(
+            row=6, column=0, columnspan=3, pady=15)
+
+        dialog.grid_rowconfigure(3, weight=1)
+        dialog.grid_columnconfigure(1, weight=1)
+
     def _schedule_autosave(self):
         self._autosave_id = self.root.after(self._autosave_interval, self._autosave)
 
@@ -1043,7 +1155,7 @@ class PolygonAnnotationWithReference:
             self.load_current_image()
         os.remove(AUTOSAVE_PATH)
 
-def merge_annotations(annotation_files, image_dir, output_path, thresholds=None):
+def merge_annotations(annotation_files, image_dir, output_path, thresholds=None, merge_strategy="keep_both"):
     """Combine multiple annotation files, keeping only entries whose images exist.
 
     Args:
@@ -1055,7 +1167,13 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None)
             :func:`~nexus.seg.summarise_annotations.summarise` to print
             a summary of the merged annotations. If None, the default
             thresholds are used.
+        merge_strategy: How to handle images annotated in multiple files.
+            ``"keep_both"`` (default) retains all polygons from every file.
+            ``"override"`` keeps only the polygons from the last file in
+            *annotation_files* that contains annotations for a given image.
     """
+    if merge_strategy not in ("keep_both", "override"):
+        raise ValueError(f"Unknown merge_strategy: {merge_strategy!r}")
     from .summarise_annotations import summarise
     existing_images = set(os.listdir(image_dir))
     merged_file = {}
@@ -1089,6 +1207,14 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None)
                 next_fid += 1
 
         # Re-key metadata under new fids
+        if merge_strategy == "override":
+            overridden_fids = set()
+            for key, meta in old_meta.items():
+                old_fid = meta.get("vid", key.split("_")[0])
+                if old_fid in old_fid_to_fname:
+                    overridden_fids.add(fname_to_fid[old_fid_to_fname[old_fid]])
+            merged_metadata = {k: v for k, v in merged_metadata.items() if v["vid"] not in overridden_fids}
+
         for key, meta in old_meta.items():
             old_fid = meta.get("vid", key.split("_")[0])
             if old_fid not in old_fid_to_fname:
