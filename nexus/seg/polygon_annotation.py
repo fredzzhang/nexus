@@ -183,6 +183,13 @@ class PolygonAnnotationWithReference:
         self.canvas.bind("<Button-3>", self.close_polygon)
         self.canvas.bind("<Double-Button-1>", self.delete_polygon)
         
+        self.root.bind("<Left>", lambda e: self.prev_image())
+        self.root.bind("<Right>", lambda e: self.next_image())
+        self.root.bind("r", lambda e: self.revert_annotations())
+        self.root.bind("c", lambda e: self.clear_current())
+        self.root.bind("<Delete>", lambda e: self.clear_all())
+        self.root.bind("t", lambda e: self.toggle_show_original())
+        
         self.load_base_classes()
         self._check_autosave()
         self._schedule_autosave()
