@@ -34,6 +34,17 @@ BASE_DATA = {
     "metadata": {}
 }
 
+# Glasbey palette: 32 perceptually distinct colors for class visualization.
+_GLASBEY_PALETTE = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+    "#42d4f4", "#f032e6", "#bfef45", "#fabed4", "#469990",
+    "#dcbeff", "#9a6324", "#fffac8", "#800000", "#aaffc3",
+    "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#e6beff",
+    "#ffe119", "#00ff7f", "#ff6347", "#7b68ee", "#00ced1",
+    "#ff1493", "#7fff00", "#dc143c", "#00bfff", "#ff8c00",
+    "#adff2f", "#da70d6",
+]
+
 class PolygonAnnotationWithReference:
     """A tkinter-based polygon annotation tool with side-by-side reference image viewing.
 
@@ -146,7 +157,8 @@ class PolygonAnnotationWithReference:
         self.all_annotations = {}
         self.classes = {}
         self.polygon_labels = {}
-        self.colors = ['green', 'blue', 'red', 'yellow', 'purple', 'orange', 'cyan', 'magenta']
+        self._class_colors = {}
+        self._next_color_idx = 0
         self.selected_class = None
         self.loaded_data = None
         self._saved_annotations = {}
@@ -168,6 +180,13 @@ class PolygonAnnotationWithReference:
         self._check_autosave()
         self._schedule_autosave()
     
+    def _color_for_class(self, class_idx):
+        """Return a stable, distinct color for a class index using Glasbey palette."""
+        if class_idx not in self._class_colors:
+            self._class_colors[class_idx] = _GLASBEY_PALETTE[self._next_color_idx % len(_GLASBEY_PALETTE)]
+            self._next_color_idx += 1
+        return self._class_colors[class_idx]
+
     @staticmethod
     def _parse_pattern(pattern):
         parts = pattern.split('*', 1)
@@ -380,7 +399,7 @@ class PolygonAnnotationWithReference:
             poly_key = (self.image_path, poly_idx)
             class_idx = self.polygon_labels.get(poly_key)
             if class_idx:
-                color = self.colors[int(class_idx) % len(self.colors)]
+                color = self._color_for_class(class_idx)
             else:
                 color = 'green'
             
@@ -402,7 +421,7 @@ class PolygonAnnotationWithReference:
             
             if self.selected_class and self.selected_class in self.classes:
                 class_idx = self.classes[self.selected_class]
-                color = self.colors[int(class_idx) % len(self.colors)]
+                color = self._color_for_class(class_idx)
             else:
                 class_idx = None
                 color = 'green'
@@ -561,7 +580,7 @@ class PolygonAnnotationWithReference:
                 poly_key = (self.image_path, poly_idx)
                 class_idx = self.polygon_labels.get(poly_key)
                 if class_idx:
-                    color = self.colors[int(class_idx) % len(self.colors)]
+                    color = self._color_for_class(class_idx)
                 else:
                     color = 'green'
                 
@@ -630,7 +649,7 @@ class PolygonAnnotationWithReference:
         self.class_buttons.clear()
         
         for name, idx in self.classes.items():
-            color = self.colors[int(idx) % len(self.colors)]
+            color = self._color_for_class(idx)
             btn = tk.Button(self.class_buttons_frame, text=name, bg=color, 
                           activebackground=color, highlightbackground=color,
                           command=lambda n=name: self.select_class(n))
