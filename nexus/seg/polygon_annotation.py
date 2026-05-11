@@ -658,6 +658,8 @@ class PolygonAnnotationWithReference:
         self._pan_start = None
 
     def delete_polygon(self, event):
+        if not self.edit_mode:
+            return
         if event.widget != self.canvas:
             return
         x, y = event.x, event.y
