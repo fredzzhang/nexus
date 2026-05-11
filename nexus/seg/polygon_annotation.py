@@ -189,6 +189,7 @@ class PolygonAnnotationWithReference:
         self.root.bind("c", lambda e: self.clear_current())
         self.root.bind("<Delete>", lambda e: self.clear_all())
         self.root.bind("t", lambda e: self.toggle_show_original())
+        self.root.bind("e", lambda e: self.toggle_edit_mode())
         
         self.load_base_classes()
         self._check_autosave()
