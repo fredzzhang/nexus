@@ -105,6 +105,12 @@ class PolygonAnnotationWithReference:
         self.filename_label = tk.Label(self.top_frame, text="No image loaded")
         self.filename_label.pack(side=tk.LEFT, padx=10)
         
+        tk.Label(self.top_frame, text="Filter:").pack(side=tk.LEFT)
+        self.filter_dropdown = ttk.Combobox(self.top_frame, state="readonly", width=20)
+        self.filter_dropdown.pack(side=tk.LEFT, padx=5)
+        self.filter_dropdown.set("All")
+        self.filter_dropdown.bind("<<ComboboxSelected>>", self._apply_filter)
+        
         self.canvas_frame = tk.Frame(root)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -149,6 +155,7 @@ class PolygonAnnotationWithReference:
         self.polygons = []
         self.polygon_items = []
         self.image_files = []
+        self._filtered_files = None
         self.current_index = 0
         self.directory = None
         self.scale = 1.0
@@ -212,6 +219,8 @@ class PolygonAnnotationWithReference:
                 self.image_files = [os.path.join(directory, f) for f in all_files]
             self.image_files.sort()
             if self.image_files:
+                self._filtered_files = None
+                self.filter_dropdown.set("All")
                 filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
                 self.file_dropdown['values'] = filenames
                 self.all_annotations = {}
@@ -241,27 +250,52 @@ class PolygonAnnotationWithReference:
             self.canvas.config(width=new_size[0], height=new_size[1])
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
             self.image_path = path
-            self.filename_label.config(text=f"{os.path.basename(path)} ({self.current_index + 1}/{len(self.image_files)})")
-            self.file_dropdown.set(f"[{self.current_index + 1}] {os.path.basename(path)}")
+            active = self._get_active_files()
+            if path in active:
+                filtered_idx = active.index(path)
+            else:
+                filtered_idx = self.current_index
+            self.filename_label.config(text=f"{os.path.basename(path)} ({filtered_idx + 1}/{len(active)})")
+            self.file_dropdown.set(f"[{filtered_idx + 1}] {os.path.basename(path)}")
             self.current_polygon = []
             
             self.load_reference_image(path)
             self.restore_annotations()
     
+    def _get_active_files(self):
+        """Return the currently active file list (filtered or all)."""
+        if hasattr(self, '_filtered_files') and self._filtered_files is not None:
+            return self._filtered_files
+        return self.image_files
+
     def prev_image(self):
-        if self.image_files and self.current_index > 0:
-            self.current_index -= 1
-            self.load_current_image()
+        active = self._get_active_files()
+        if not active:
+            return
+        cur_path = self.image_files[self.current_index] if self.image_files else None
+        if cur_path in active:
+            idx = active.index(cur_path)
+            if idx > 0:
+                self.current_index = self.image_files.index(active[idx - 1])
+                self.load_current_image()
     
     def next_image(self):
-        if self.image_files and self.current_index < len(self.image_files) - 1:
-            self.current_index += 1
-            self.load_current_image()
+        active = self._get_active_files()
+        if not active:
+            return
+        cur_path = self.image_files[self.current_index] if self.image_files else None
+        if cur_path in active:
+            idx = active.index(cur_path)
+            if idx < len(active) - 1:
+                self.current_index = self.image_files.index(active[idx + 1])
+                self.load_current_image()
     
     def on_file_selected(self, event):
         selected = self.file_dropdown.get()
         idx = int(selected.split("]", 1)[0].lstrip("[")) - 1
-        self.current_index = idx
+        active = self._get_active_files()
+        if idx < len(active):
+            self.current_index = self.image_files.index(active[idx])
         self.load_current_image()
     
     def load_reference_image(self, main_path):
@@ -656,7 +690,54 @@ class PolygonAnnotationWithReference:
             self.class_buttons[name] = btn
         
         self.root.after(100, self.reflow_class_buttons)
+        self._update_filter_options()
     
+    def _update_filter_options(self):
+        options = ["All", "Unannotated"] + list(self.classes.keys())
+        current = self.filter_dropdown.get()
+        self.filter_dropdown['values'] = options
+        if current not in options:
+            self.filter_dropdown.set("All")
+
+    def _apply_filter(self, event=None):
+        if not self.image_files:
+            return
+        self.save_current_annotations()
+        selected = self.filter_dropdown.get()
+        if selected == "All":
+            filtered = self.image_files
+        elif selected == "Unannotated":
+            filtered = [p for p in self.image_files
+                        if not self.all_annotations.get(p)]
+        else:
+            # Filter by class name
+            class_idx = self.classes.get(selected)
+            if class_idx is None:
+                filtered = self.image_files
+            else:
+                filtered = []
+                for p in self.image_files:
+                    for poly_idx in range(len(self.all_annotations.get(p, []))):
+                        if self.polygon_labels.get((p, poly_idx)) == class_idx:
+                            filtered.append(p)
+                            break
+        self._filtered_files = filtered
+        filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(filtered)]
+        self.file_dropdown['values'] = filenames
+        if filtered:
+            self.current_index = 0
+            self._set_current_from_filtered(0)
+            self.load_current_image()
+        else:
+            self.file_dropdown.set("")
+            self.filename_label.config(text="No images match filter")
+
+    def _set_current_from_filtered(self, filtered_idx):
+        """Set self.current_index to the index in self.image_files for the filtered selection."""
+        if hasattr(self, '_filtered_files') and self._filtered_files:
+            path = self._filtered_files[filtered_idx]
+            self.current_index = self.image_files.index(path)
+
     def load_base_classes(self):
         data = copy.deepcopy(BASE_DATA)
         base_options = data["attribute"]["1"]["options"]
@@ -1130,7 +1211,7 @@ class PolygonAnnotationWithReference:
                 self.image_files = [os.path.join(directory, f) for f in all_files]
             self.image_files.sort()
             if self.image_files:
-                filenames = [f"{i+1}: {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
+                filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
                 self.file_dropdown['values'] = filenames
         # Load annotations from autosave
         self._loaded_annotation_path = session.get("annotation_path") or None
