@@ -690,6 +690,12 @@ class PolygonAnnotationWithReference:
             widget.destroy()
         self.class_buttons.clear()
         
+        # Re-assign colors sequentially based on class order
+        self._class_colors = {}
+        self._next_color_idx = 0
+        for name, idx in self.classes.items():
+            self._color_for_class(idx)
+        
         for name, idx in self.classes.items():
             color = self._color_for_class(idx)
             btn = tk.Button(self.class_buttons_frame, text=name, bg=color, 
