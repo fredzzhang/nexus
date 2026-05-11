@@ -159,6 +159,10 @@ class PolygonAnnotationWithReference:
         self.current_index = 0
         self.directory = None
         self.scale = 1.0
+        self.zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self._pan_start = None
         self.max_width = 1200
         self.max_height = 800
         self.all_annotations = {}
@@ -180,8 +184,13 @@ class PolygonAnnotationWithReference:
         self._autosave_id = None
         
         self.canvas.bind("<Button-1>", self.add_point)
-        self.canvas.bind("<Button-3>", self.close_polygon)
         self.canvas.bind("<Double-Button-1>", self.delete_polygon)
+        self.canvas.bind("<Button-2>", self._pan_start_event)
+        self.canvas.bind("<B2-Motion>", self._pan_motion)
+        self.canvas.bind("<ButtonRelease-2>", self._pan_end)
+        self.canvas.bind("<Button-3>", self._pan_start_event)
+        self.canvas.bind("<B3-Motion>", self._pan_motion)
+        self.canvas.bind("<ButtonRelease-3>", self._pan_end)
         
         self.root.bind("<Left>", lambda e: self.prev_image())
         self.root.bind("<Right>", lambda e: self.next_image())
@@ -190,6 +199,10 @@ class PolygonAnnotationWithReference:
         self.root.bind("<Delete>", lambda e: self.clear_all())
         self.root.bind("t", lambda e: self.toggle_show_original())
         self.root.bind("e", lambda e: self.toggle_edit_mode())
+        self.root.bind("+", lambda e: self.zoom_in())
+        self.root.bind("=", lambda e: self.zoom_in())
+        self.root.bind("-", lambda e: self.zoom_out())
+        self.root.bind("0", lambda e: self.zoom_reset())
         
         self.load_base_classes()
         self._check_autosave()
@@ -249,13 +262,22 @@ class PolygonAnnotationWithReference:
             self.scale = min(self.max_width / self.image.width, 
                            self.max_height / self.image.height, 1.0)
             
-            new_size = (int(self.image.width * self.scale), 
-                       int(self.image.height * self.scale))
-            display_image = self.image.resize(new_size, Image.LANCZOS)
+            self.pan_x = 0.0
+            self.pan_y = 0.0
+            self._clamp_pan()
+            viewport_w = int(self.image.width * self.scale)
+            viewport_h = int(self.image.height * self.scale)
+            effective_scale = self.scale * self.zoom
+            zoomed_size = (int(self.image.width * effective_scale),
+                          int(self.image.height * effective_scale))
+            zoomed_image = self.image.resize(zoomed_size, Image.LANCZOS)
+            left = int(self.pan_x)
+            top = int(self.pan_y)
+            cropped = zoomed_image.crop((left, top, left + viewport_w, top + viewport_h))
             
-            self.photo = ImageTk.PhotoImage(display_image)
+            self.photo = ImageTk.PhotoImage(cropped)
             self.canvas.delete("all")
-            self.canvas.config(width=new_size[0], height=new_size[1])
+            self.canvas.config(width=viewport_w, height=viewport_h)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
             self.image_path = path
             active = self._get_active_files()
@@ -359,8 +381,9 @@ class PolygonAnnotationWithReference:
             self.restore_annotations()
     
     def select_polygon_for_edit(self, x, y):
+        ox, oy = self._display_to_original(x, y)
         for i, polygon in enumerate(self.polygons):
-            if self.point_in_polygon(x, y, polygon):
+            if self.point_in_polygon(ox, oy, polygon):
                 self.selected_polygon_idx = i
                 self.show_vertex_handles()
                 return True
@@ -371,7 +394,8 @@ class PolygonAnnotationWithReference:
         self.vertex_handles = []
         if self.selected_polygon_idx is not None:
             polygon = self.polygons[self.selected_polygon_idx]
-            for i, (x, y) in enumerate(polygon):
+            for i, (ox, oy) in enumerate(polygon):
+                x, y = self._original_to_display(ox, oy)
                 handle = self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="yellow", outline="black", tags="vertex_handle")
                 self.vertex_handles.append(handle)
     
@@ -385,7 +409,8 @@ class PolygonAnnotationWithReference:
         if self.selected_polygon_idx is not None:
             polygon = self.polygons[self.selected_polygon_idx]
             for i, (vx, vy) in enumerate(polygon):
-                if abs(x - vx) < 8 and abs(y - vy) < 8:
+                dx, dy = self._original_to_display(vx, vy)
+                if abs(x - dx) < 8 and abs(y - dy) < 8:
                     return i
         return None
     
@@ -395,7 +420,7 @@ class PolygonAnnotationWithReference:
         x, y = event.x, event.y
         
         if self.edit_mode:
-            # Check if clicking on a vertex
+            # Check if clicking on a vertex (compare in display coords)
             vertex_idx = self.find_vertex_at(x, y)
             if vertex_idx is not None:
                 self.selected_vertex_idx = vertex_idx
@@ -407,23 +432,25 @@ class PolygonAnnotationWithReference:
             return
         
         if len(self.current_polygon) > 2:
-            x0, y0 = self.current_polygon[0]
-            distance = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+            dx0, dy0 = self._original_to_display(*self.current_polygon[0])
+            distance = ((x - dx0) ** 2 + (y - dy0) ** 2) ** 0.5
             if distance < 10:
-                self.close_polygon(event)
+                self._close_current_polygon()
                 return
         
-        self.current_polygon.append((x, y))
+        # Store in original coordinates
+        orig_x, orig_y = self._display_to_original(x, y)
+        self.current_polygon.append((orig_x, orig_y))
         self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="red", tags="temp")
         
         if len(self.current_polygon) > 1:
-            x1, y1 = self.current_polygon[-2]
+            x1, y1 = self._original_to_display(*self.current_polygon[-2])
             self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
     
     def drag_vertex(self, event):
         if self.selected_polygon_idx is not None and self.selected_vertex_idx is not None:
-            x, y = event.x, event.y
-            self.polygons[self.selected_polygon_idx][self.selected_vertex_idx] = (x, y)
+            orig_x, orig_y = self._display_to_original(event.x, event.y)
+            self.polygons[self.selected_polygon_idx][self.selected_vertex_idx] = (orig_x, orig_y)
             self.redraw_polygon(self.selected_polygon_idx)
             self.show_vertex_handles()
     
@@ -445,18 +472,17 @@ class PolygonAnnotationWithReference:
             else:
                 color = 'green'
             
-            flat_coords = [coord for point in polygon for coord in point]
+            display_pts = [self._original_to_display(ox, oy) for ox, oy in polygon]
+            flat_coords = [coord for point in display_pts for coord in point]
             poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
             
-            x1, y1 = polygon[-1]
-            x2, y2 = polygon[0]
+            x1, y1 = display_pts[-1]
+            x2, y2 = display_pts[0]
             line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
             
             self.polygon_items[poly_idx] = [line_id, poly_id]
     
-    def close_polygon(self, event):
-        if event.widget != self.canvas:
-            return
+    def _close_current_polygon(self):
         if len(self.current_polygon) > 2:
             poly_idx = len(self.polygons)
             self.polygons.append(self.current_polygon[:])
@@ -471,11 +497,12 @@ class PolygonAnnotationWithReference:
             poly_key = (self.image_path, poly_idx)
             self.polygon_labels[poly_key] = class_idx
             
-            x1, y1 = self.current_polygon[-1]
-            x2, y2 = self.current_polygon[0]
+            display_pts = [self._original_to_display(ox, oy) for ox, oy in self.current_polygon]
+            x1, y1 = display_pts[-1]
+            x2, y2 = display_pts[0]
             line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
             
-            flat_coords = [coord for point in self.current_polygon for coord in point]
+            flat_coords = [coord for point in display_pts for coord in point]
             poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
             
             self.polygon_items.append([line_id, poly_id])
@@ -538,10 +565,103 @@ class PolygonAnnotationWithReference:
             self.show_original_btn.config(relief=tk.RAISED, text="Show Original")
             self.restore_annotations()
     
+    def _refresh_display(self):
+        """Redraw the primary image and annotations at the current zoom level."""
+        if not self.image:
+            return
+        self.save_current_annotations()
+        self._clamp_pan()
+        viewport_w = int(self.image.width * self.scale)
+        viewport_h = int(self.image.height * self.scale)
+        effective_scale = self.scale * self.zoom
+        # Crop the zoomed image to the viewport
+        zoomed_size = (int(self.image.width * effective_scale),
+                       int(self.image.height * effective_scale))
+        zoomed_image = self.image.resize(zoomed_size, Image.LANCZOS)
+        left = int(self.pan_x)
+        top = int(self.pan_y)
+        right = left + viewport_w
+        bottom = top + viewport_h
+        cropped = zoomed_image.crop((left, top, right, bottom))
+        self.photo = ImageTk.PhotoImage(cropped)
+        self.canvas.delete("all")
+        self.canvas.config(width=viewport_w, height=viewport_h)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+        self.restore_annotations()
+
+    def _clamp_pan(self):
+        """Clamp pan offsets so the viewport stays within the zoomed image."""
+        effective_scale = self.scale * self.zoom
+        max_x = max(0, int(self.image.width * effective_scale) - int(self.image.width * self.scale))
+        max_y = max(0, int(self.image.height * effective_scale) - int(self.image.height * self.scale))
+        self.pan_x = max(0, min(self.pan_x, max_x))
+        self.pan_y = max(0, min(self.pan_y, max_y))
+
+    def _display_to_original(self, x, y):
+        """Convert display (canvas) coordinates to original image coordinates."""
+        effective_scale = self.scale * self.zoom
+        orig_x = (x + self.pan_x) / effective_scale
+        orig_y = (y + self.pan_y) / effective_scale
+        return orig_x, orig_y
+
+    def _original_to_display(self, x, y):
+        """Convert original image coordinates to display (canvas) coordinates."""
+        effective_scale = self.scale * self.zoom
+        disp_x = x * effective_scale - self.pan_x
+        disp_y = y * effective_scale - self.pan_y
+        return disp_x, disp_y
+
+    def zoom_in(self):
+        # Zoom towards center of viewport
+        viewport_w = int(self.image.width * self.scale)
+        viewport_h = int(self.image.height * self.scale)
+        center_x = self.pan_x + viewport_w / 2
+        center_y = self.pan_y + viewport_h / 2
+        old_zoom = self.zoom
+        self.zoom = min(self.zoom * 1.25, 5.0)
+        ratio = self.zoom / old_zoom
+        self.pan_x = center_x * ratio - viewport_w / 2
+        self.pan_y = center_y * ratio - viewport_h / 2
+        self._refresh_display()
+
+    def zoom_out(self):
+        viewport_w = int(self.image.width * self.scale)
+        viewport_h = int(self.image.height * self.scale)
+        center_x = self.pan_x + viewport_w / 2
+        center_y = self.pan_y + viewport_h / 2
+        old_zoom = self.zoom
+        self.zoom = max(self.zoom / 1.25, 1.0)
+        ratio = self.zoom / old_zoom
+        self.pan_x = center_x * ratio - viewport_w / 2
+        self.pan_y = center_y * ratio - viewport_h / 2
+        self._refresh_display()
+
+    def zoom_reset(self):
+        self.zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self._refresh_display()
+
+    def _pan_start_event(self, event):
+        self._pan_start = (event.x, event.y)
+
+    def _pan_motion(self, event):
+        if self._pan_start:
+            dx = self._pan_start[0] - event.x
+            dy = self._pan_start[1] - event.y
+            self.pan_x += dx
+            self.pan_y += dy
+            self._pan_start = (event.x, event.y)
+            self._refresh_display()
+
+    def _pan_end(self, event):
+        self._pan_start = None
+
     def delete_polygon(self, event):
         if event.widget != self.canvas:
             return
         x, y = event.x, event.y
+        ox, oy = self._display_to_original(x, y)
         
         delete_idx = None
         
@@ -550,7 +670,7 @@ class PolygonAnnotationWithReference:
             self.deselect_polygon()
         else:
             for i, polygon in enumerate(self.polygons):
-                if self.point_in_polygon(x, y, polygon):
+                if self.point_in_polygon(ox, oy, polygon):
                     delete_idx = i
                     break
         
@@ -594,8 +714,7 @@ class PolygonAnnotationWithReference:
             for old_idx, polygon in enumerate(self.polygons):
                 if len(polygon) < 3:
                     continue
-                original_poly = [(x / self.scale, y / self.scale) for x, y in polygon]
-                original_polygons.append(original_poly)
+                original_polygons.append(list(polygon))
                 old_key = (self.image_path, old_idx)
                 if old_key in self.polygon_labels:
                     new_labels[(self.image_path, new_idx)] = self.polygon_labels[old_key]
@@ -616,8 +735,7 @@ class PolygonAnnotationWithReference:
         
         if self.image_path in self.all_annotations:
             for poly_idx, original_polygon in enumerate(self.all_annotations[self.image_path]):
-                display_polygon = [(x * self.scale, y * self.scale) for x, y in original_polygon]
-                self.polygons.append(display_polygon)
+                self.polygons.append(list(original_polygon))
                 
                 poly_key = (self.image_path, poly_idx)
                 class_idx = self.polygon_labels.get(poly_key)
@@ -626,11 +744,12 @@ class PolygonAnnotationWithReference:
                 else:
                     color = 'green'
                 
-                flat_coords = [coord for point in display_polygon for coord in point]
+                display_pts = [self._original_to_display(x, y) for x, y in original_polygon]
+                flat_coords = [coord for point in display_pts for coord in point]
                 poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
                 
-                x1, y1 = display_polygon[-1]
-                x2, y2 = display_polygon[0]
+                x1, y1 = display_pts[-1]
+                x2, y2 = display_pts[0]
                 line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
                 
                 self.polygon_items.append([line_id, poly_id])
