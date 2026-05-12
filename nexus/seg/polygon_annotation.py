@@ -126,9 +126,9 @@ class PolygonAnnotationWithReference:
         control_frame = tk.Frame(self.btn_frame)
         control_frame.pack(side=tk.TOP, fill=tk.X)
         
-        tk.Button(control_frame, text="Clear Current", command=self.clear_current).pack(side=tk.LEFT)
-        tk.Button(control_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT)
-        self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF", command=self.toggle_edit_mode)
+        tk.Button(control_frame, text="Clear Current [C]", command=self.clear_current).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Clear All [Del]", command=self.clear_all).pack(side=tk.LEFT)
+        self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF [E]", command=self.toggle_edit_mode)
         self.edit_mode_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
         tk.Label(control_frame, text="Class:").pack(side=tk.LEFT)
@@ -136,8 +136,8 @@ class PolygonAnnotationWithReference:
         self.class_dropdown.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
-        tk.Button(control_frame, text="Revert", command=self.revert_annotations).pack(side=tk.LEFT)
-        self.show_original_btn = tk.Button(control_frame, text="Show Original", command=self.toggle_show_original)
+        tk.Button(control_frame, text="Revert [R]", command=self.revert_annotations).pack(side=tk.LEFT)
+        self.show_original_btn = tk.Button(control_frame, text="Show Original [T]", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
         
@@ -371,10 +371,10 @@ class PolygonAnnotationWithReference:
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
         if self.edit_mode:
-            self.edit_mode_btn.config(text="Edit Mode: ON", relief=tk.SUNKEN)
+            self.edit_mode_btn.config(text="Edit Mode: ON [E]", relief=tk.SUNKEN)
             self.clear_current()
         else:
-            self.edit_mode_btn.config(text="Edit Mode: OFF", relief=tk.RAISED)
+            self.edit_mode_btn.config(text="Edit Mode: OFF [E]", relief=tk.RAISED)
             self.deselect_polygon()
             # Save and reload to ensure consistency
             self.save_current_annotations()
@@ -557,12 +557,12 @@ class PolygonAnnotationWithReference:
         self.showing_original = not self.showing_original
         if self.showing_original:
             self.save_current_annotations()
-            self.show_original_btn.config(relief=tk.SUNKEN, text="Show Annotations")
+            self.show_original_btn.config(relief=tk.SUNKEN, text="Show Annotations [T]")
             self.canvas.delete("polygon")
             self.canvas.delete("vertex_handle")
             self.canvas.delete("temp")
         else:
-            self.show_original_btn.config(relief=tk.RAISED, text="Show Original")
+            self.show_original_btn.config(relief=tk.RAISED, text="Show Original [T]")
             self.restore_annotations()
     
     def _refresh_display(self):
