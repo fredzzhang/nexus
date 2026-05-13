@@ -333,6 +333,7 @@ class PolygonAnnotationWithReference:
             c.destroy()
         self.ref_canvases = []
         self.ref_photos = []
+        self._ref_images = []
 
         ref_patterns = self._name_format[1:] if self._name_format and len(self._name_format) > 1 else []
         if not ref_patterns:
@@ -341,7 +342,6 @@ class PolygonAnnotationWithReference:
         basename = os.path.basename(main_path)
         ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
         stem = self._extract_stem(basename, ann_prefix, ann_suffix)
-        target_height = int(self.image.height * self.scale)
 
         for pattern in ref_patterns:
             ref_prefix, ref_suffix = self._parse_pattern(pattern)
@@ -349,21 +349,58 @@ class PolygonAnnotationWithReference:
             ref_path = os.path.join(self.directory, ref_name)
 
             if os.path.exists(ref_path):
-                ref_image = Image.open(ref_path)
-                scale = target_height / ref_image.height
-                new_size = (int(ref_image.width * scale), target_height)
-                ref_image = ref_image.resize(new_size, Image.LANCZOS)
-                photo = ImageTk.PhotoImage(ref_image)
+                self._ref_images.append(Image.open(ref_path))
             else:
-                new_size = (int(self.image.width * self.scale), target_height)
-                placeholder = Image.new('RGB', new_size, 'gray')
-                draw = ImageDraw.Draw(placeholder)
-                draw.text((placeholder.width // 2 - 80, placeholder.height // 2),
-                          f"No ref: {ref_name}", fill='white')
-                photo = ImageTk.PhotoImage(placeholder)
-            self.ref_photos.append(photo)
+                self._ref_images.append(None)
 
-            canvas = tk.Canvas(self.canvas_frame, width=new_size[0], height=new_size[1])
+        self._refresh_reference_images()
+
+    def _refresh_reference_images(self):
+        """Redraw reference images with the same zoom/pan as the primary image."""
+        for c in self.ref_canvases:
+            c.destroy()
+        self.ref_canvases = []
+        self.ref_photos = []
+
+        if not hasattr(self, '_ref_images') or not self._ref_images:
+            return
+
+        viewport_h = int(self.image.height * self.scale)
+        viewport_w = int(self.image.width * self.scale)
+
+        for ref_image in self._ref_images:
+            if ref_image is not None:
+                # Scale ref to match primary image's base scale ratio
+                ref_scale = self.scale * (self.image.height / ref_image.height) * self.zoom
+                zoomed_size = (int(ref_image.width * ref_scale),
+                               int(ref_image.height * ref_scale))
+                zoomed_ref = ref_image.resize(zoomed_size, Image.LANCZOS)
+                # Apply same pan ratio
+                effective_scale = self.scale * self.zoom
+                max_x = max(1, int(self.image.width * effective_scale) - viewport_w)
+                max_y = max(1, int(self.image.height * effective_scale) - viewport_h)
+                pan_ratio_x = self.pan_x / max_x if max_x > 0 else 0
+                pan_ratio_y = self.pan_y / max_y if max_y > 0 else 0
+                ref_viewport_w = min(viewport_w, zoomed_size[0])
+                ref_viewport_h = min(viewport_h, zoomed_size[1])
+                ref_max_x = max(0, zoomed_size[0] - ref_viewport_w)
+                ref_max_y = max(0, zoomed_size[1] - ref_viewport_h)
+                ref_pan_x = int(pan_ratio_x * ref_max_x)
+                ref_pan_y = int(pan_ratio_y * ref_max_y)
+                cropped = zoomed_ref.crop((ref_pan_x, ref_pan_y,
+                                           ref_pan_x + ref_viewport_w,
+                                           ref_pan_y + ref_viewport_h))
+                photo = ImageTk.PhotoImage(cropped)
+                canvas_w, canvas_h = ref_viewport_w, ref_viewport_h
+            else:
+                placeholder = Image.new('RGB', (viewport_w, viewport_h), 'gray')
+                draw = ImageDraw.Draw(placeholder)
+                draw.text((viewport_w // 2 - 40, viewport_h // 2), "No ref", fill='white')
+                photo = ImageTk.PhotoImage(placeholder)
+                canvas_w, canvas_h = viewport_w, viewport_h
+
+            self.ref_photos.append(photo)
+            canvas = tk.Canvas(self.canvas_frame, width=canvas_w, height=canvas_h)
             canvas.pack(side=tk.LEFT, anchor=tk.N)
             canvas.create_image(0, 0, anchor=tk.NW, image=photo)
             self.ref_canvases.append(canvas)
@@ -588,6 +625,7 @@ class PolygonAnnotationWithReference:
         self.canvas.config(width=viewport_w, height=viewport_h)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
         self.restore_annotations()
+        self._refresh_reference_images()
 
     def _clamp_pan(self):
         """Clamp pan offsets so the viewport stays within the zoomed image."""
