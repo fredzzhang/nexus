@@ -1141,13 +1141,17 @@ class PolygonAnnotationWithReference:
             next_fid += 1
             file_dict[file_id] = {"fid": file_id, "fname": fname}
             for poly_idx, polygon in enumerate(polygons):
-                rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                while True:
+                    rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                    key = f"{file_id}_{rand}"
+                    if key not in metadata_dict:
+                        break
                 coords = [2]
                 for x, y in polygon:
                     coords.extend([int(x), int(y)])
                 poly_key = (img_path, poly_idx)
                 class_idx = self.polygon_labels.get(poly_key, "405")
-                metadata_dict[f"{file_id}_{rand}"] = {
+                metadata_dict[key] = {
                     "vid": file_id,
                     "xy": coords,
                     "av": {"1": class_idx if class_idx else "405"}
@@ -1455,8 +1459,11 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
             if old_fid not in old_fid_to_fname:
                 continue
             new_fid = fname_to_fid[old_fid_to_fname[old_fid]]
-            rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-            new_key = f"{new_fid}_{rand}"
+            while True:
+                rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                new_key = f"{new_fid}_{rand}"
+                if new_key not in merged_metadata:
+                    break
             merged_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
 
     # Keep only files that have polygons, re-key sequentially
@@ -1474,8 +1481,11 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
     final_metadata = {}
     for key, meta in merged_metadata.items():
         new_fid = fid_remap[meta["vid"]]
-        rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-        new_key = f"{new_fid}_{rand}"
+        while True:
+            rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            new_key = f"{new_fid}_{rand}"
+            if new_key not in final_metadata:
+                break
         final_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
 
     output = {
