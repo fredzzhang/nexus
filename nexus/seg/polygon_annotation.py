@@ -131,9 +131,6 @@ class PolygonAnnotationWithReference:
         self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF [E]", command=self.toggle_edit_mode)
         self.edit_mode_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
-        tk.Label(control_frame, text="Class:").pack(side=tk.LEFT)
-        self.class_dropdown = ttk.Combobox(control_frame, state="readonly", width=15)
-        self.class_dropdown.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Revert [R]", command=self.revert_annotations).pack(side=tk.LEFT)
@@ -796,7 +793,6 @@ class PolygonAnnotationWithReference:
     
     def select_class(self, class_name):
         self.selected_class = class_name
-        self.class_dropdown.set(class_name)
         for name, btn in self.class_buttons.items():
             if name == class_name:
                 btn.config(relief=tk.SUNKEN)
@@ -941,7 +937,6 @@ class PolygonAnnotationWithReference:
             else:
                 self.classes = all_classes
 
-        self.class_dropdown['values'] = list(self.classes.keys())
         self.update_class_buttons()
         self.loaded_data = data
     
@@ -996,9 +991,6 @@ class PolygonAnnotationWithReference:
             name = name_entry.get().strip()
             if idx and name:
                 self.classes[name] = idx
-                self.class_dropdown['values'] = list(self.classes.keys())
-                if not self.class_dropdown.get():
-                    self.class_dropdown.set(name)
                 refresh_listbox()
                 idx_entry.delete(0, tk.END)
                 name_entry.delete(0, tk.END)
@@ -1018,7 +1010,6 @@ class PolygonAnnotationWithReference:
                         if self.polygon_labels[key] == self.classes.get(old_name):
                             self.polygon_labels[key] = new_idx
                     
-                    self.class_dropdown['values'] = list(self.classes.keys())
                     refresh_listbox()
                     idx_entry.delete(0, tk.END)
                     name_entry.delete(0, tk.END)
@@ -1083,7 +1074,6 @@ class PolygonAnnotationWithReference:
                 else:
                     self.classes = all_classes
                 
-                self.class_dropdown['values'] = list(self.classes.keys())
                 self.update_class_buttons()
             
             self.root.update_idletasks()
@@ -1403,7 +1393,6 @@ class PolygonAnnotationWithReference:
                                if name.lower().startswith(asin_lower + " - ")}
             else:
                 self.classes = all_classes
-            self.class_dropdown['values'] = list(self.classes.keys())
             self.update_class_buttons()
         loaded_annotations = {}
         self.polygon_labels = {}
