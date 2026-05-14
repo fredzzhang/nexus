@@ -76,6 +76,8 @@ class PolygonAnnotationWithReference:
         autosave_interval: Interval in minutes between automatic saves
             (default 5). The auto-save is written to a temporary file and
             removed after a successful manual save.
+        display_height: Fixed display height in pixels for the annotation
+            image (default 500). Images are scaled to this height.
 
     Controls:
         - Left-click: Add polygon vertex (click near first point to close).
@@ -85,7 +87,7 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
@@ -164,8 +166,7 @@ class PolygonAnnotationWithReference:
         self.pan_x = 0.0
         self.pan_y = 0.0
         self._pan_start = None
-        self.max_width = 1200
-        self.max_height = 800
+        self.display_height = display_height
         self.all_annotations = {}
         self.classes = {}
         self.polygon_labels = {}
@@ -260,8 +261,7 @@ class PolygonAnnotationWithReference:
             
             self.root.update_idletasks()
             
-            self.scale = min(self.max_width / self.image.width, 
-                           self.max_height / self.image.height, 1.0)
+            self.scale = self.display_height / self.image.height
             
             self.pan_x = 0.0
             self.pan_y = 0.0
@@ -1670,7 +1670,7 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
 
     summarise(output_path, image_dir, thresholds=thresholds)
 
-def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
+def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1686,10 +1686,12 @@ def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin
 
             If None, all images are annotation targets with no references.
         autosave_interval: Interval in minutes between automatic saves (default 5).
+        display_height: Fixed display height in pixels for the annotation image
+            (default 500). Images are scaled to this height.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
