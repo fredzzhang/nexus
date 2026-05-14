@@ -929,7 +929,7 @@ class PolygonAnnotationWithReference:
             self.classes = {name: idx for name, idx in all_classes.items()
                            if name.lower().startswith(produce_lower + " - ")}
         else:
-            produce_name = self.prompt_produce_name()
+            produce_name = self.prompt_produce_name(all_classes)
             if produce_name:
                 produce_lower = produce_name.lower()
                 self.classes = {name: idx for name, idx in all_classes.items()
@@ -940,22 +940,41 @@ class PolygonAnnotationWithReference:
         self.update_class_buttons()
         self.loaded_data = data
     
-    def prompt_produce_name(self):
+    def prompt_produce_name(self, all_classes=None):
+        """Prompt user to select a category to filter classes.
+        
+        Args:
+            all_classes: Optional dict of all available classes to extract
+                category names from. If None, shows only a text entry.
+        """
         dialog = tk.Toplevel(self.root)
-        dialog.title("Filter Classes by Produce")
-        dialog.geometry("600x120")
+        dialog.title("Filter Classes by Category")
+        dialog.geometry("600x150")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        tk.Label(dialog, text="Enter ASIN name (not case sensitive) to filter classes, e.g., strawberry:").pack(pady=10)
-        entry = tk.Entry(dialog, width=30)
-        entry.pack(pady=5)
-        entry.focus()
+        tk.Label(dialog, text="Select or enter category name to filter classes:").pack(pady=10)
+        
+        # Extract unique category prefixes from class names
+        categories = []
+        if all_classes:
+            prefixes = set()
+            for name in all_classes:
+                if " - " in name:
+                    prefixes.add(name.split(" - ", 1)[0])
+            categories = sorted(prefixes)
+        
+        combo = ttk.Combobox(dialog, values=["All"] + categories, width=30)
+        combo.pack(pady=5)
+        if categories:
+            combo.set(categories[0])
+        combo.focus()
         
         result = [None]
         
         def on_ok():
-            result[0] = entry.get().strip()
+            val = combo.get().strip()
+            result[0] = None if val == "All" else val
             dialog.destroy()
         
         def on_cancel():
@@ -966,7 +985,7 @@ class PolygonAnnotationWithReference:
         tk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
         
-        entry.bind('<Return>', lambda e: on_ok())
+        combo.bind('<Return>', lambda e: on_ok())
         
         dialog.wait_window()
         return result[0]
@@ -1066,7 +1085,7 @@ class PolygonAnnotationWithReference:
                 all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
                 
                 # Prompt for produce name to filter classes
-                produce_name = self.prompt_produce_name()
+                produce_name = self.prompt_produce_name(all_classes)
                 if produce_name:
                     produce_lower = produce_name.lower()
                     self.classes = {name: idx for name, idx in all_classes.items() 
