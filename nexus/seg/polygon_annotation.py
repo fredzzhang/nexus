@@ -1209,6 +1209,7 @@ class PolygonAnnotationWithReference:
             
             loaded_annotations = {}
             self.polygon_labels = {}
+            missing_count = 0
             
             for file_id, file_info in file_dict.items():
                 fname = file_info["fname"]
@@ -1237,12 +1238,23 @@ class PolygonAnnotationWithReference:
                             poly_idx += 1
                     
                     loaded_annotations[img_path] = polygons
+                else:
+                    # Check if this file has any annotations
+                    for key in metadata_dict:
+                        if key.startswith(f"{file_id}_"):
+                            missing_count += 1
+                            break
             
             self.all_annotations = loaded_annotations
             self._saved_annotations = copy.deepcopy(loaded_annotations)
             self._saved_labels = copy.deepcopy(self.polygon_labels)
             self.loaded_data = data
             self.restore_annotations()
+            if missing_count > 0:
+                messagebox.showwarning(
+                    "Missing Images",
+                    f"{missing_count} annotated image(s) in the annotation file "
+                    f"were not found in the image directory and will be skipped.")
             messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
     
     def prompt_project_name(self):
