@@ -3,6 +3,7 @@
 Fred Zhang <frezz@amazon.com>
 """
 import os
+import sys
 import json
 import copy
 import random
@@ -227,7 +228,7 @@ class PolygonAnnotationWithReference:
         return filename[len(prefix):len(filename) - len(suffix)]
 
     def load_directory(self):
-        directory = filedialog.askdirectory()
+        directory = filedialog.askdirectory(initialdir=os.path.dirname(os.path.abspath(sys.argv[0])))
         if directory:
             self.directory = directory
             all_files = sorted(f for f in os.listdir(directory)
