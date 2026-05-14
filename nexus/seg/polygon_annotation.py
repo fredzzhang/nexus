@@ -137,6 +137,9 @@ class PolygonAnnotationWithReference:
         self.show_original_btn = tk.Button(control_frame, text="Show Original [T]", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
+        self._show_ref_annotations = tk.BooleanVar(value=False)
+        tk.Checkbutton(control_frame, text="Display annotations on ref.", variable=self._show_ref_annotations,
+                       command=self._on_ref_annotations_toggle).pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -286,8 +289,8 @@ class PolygonAnnotationWithReference:
             self.file_dropdown.set(f"[{filtered_idx + 1}] {os.path.basename(path)}")
             self.current_polygon = []
             
-            self.load_reference_image(path)
             self.restore_annotations()
+            self.load_reference_image(path)
     
     def _get_active_files(self):
         """Return the currently active file list (filtered or all)."""
@@ -395,12 +398,97 @@ class PolygonAnnotationWithReference:
                 draw.text((viewport_w // 2 - 40, viewport_h // 2), "No ref", fill='white')
                 photo = ImageTk.PhotoImage(placeholder)
                 canvas_w, canvas_h = viewport_w, viewport_h
+                ref_image = None
+                ref_pan_x, ref_pan_y = 0, 0
+                ref_scale = 1
 
             self.ref_photos.append(photo)
             canvas = tk.Canvas(self.canvas_frame, width=canvas_w, height=canvas_h)
             canvas.pack(side=tk.LEFT, anchor=tk.N)
             canvas.create_image(0, 0, anchor=tk.NW, image=photo)
             self.ref_canvases.append(canvas)
+
+            # Draw annotations on reference image
+            if self._show_ref_annotations.get() and ref_image is not None and hasattr(self, 'image_path'):
+                img_w, img_h = self.image.width, self.image.height
+                ref_w, ref_h = ref_image.width, ref_image.height
+                for poly_idx, polygon in enumerate(self.polygons):
+                    poly_key = (self.image_path, poly_idx)
+                    class_idx = self.polygon_labels.get(poly_key)
+                    color = self._color_for_class(class_idx) if class_idx else 'green'
+                    # Convert original coords to relative, then to ref display coords
+                    display_pts = []
+                    for ox, oy in polygon:
+                        rel_x = ox / img_w
+                        rel_y = oy / img_h
+                        rx = rel_x * ref_w * ref_scale - ref_pan_x
+                        ry = rel_y * ref_h * ref_scale - ref_pan_y
+                        display_pts.append((rx, ry))
+                    if len(display_pts) > 2:
+                        flat = [coord for pt in display_pts for coord in pt]
+                        canvas.create_polygon(flat, outline=color, fill="", width=2)
+
+    def _on_ref_annotations_toggle(self):
+        self._refresh_reference_images()
+
+    def _update_ref_overlays(self):
+        """Lightweight update of polygon overlays on reference canvases."""
+        if not self._show_ref_annotations.get():
+            return
+        if not hasattr(self, '_ref_images') or not self._ref_images:
+            return
+        if not hasattr(self, 'image_path') or not self.image:
+            return
+
+        img_w, img_h = self.image.width, self.image.height
+        viewport_w = int(img_w * self.scale)
+        viewport_h = int(img_h * self.scale)
+        effective_scale = self.scale * self.zoom
+        max_x = max(1, int(img_w * effective_scale) - viewport_w)
+        max_y = max(1, int(img_h * effective_scale) - viewport_h)
+        pan_ratio_x = self.pan_x / max_x if max_x > 0 else 0
+        pan_ratio_y = self.pan_y / max_y if max_y > 0 else 0
+
+        for i, (canvas, ref_image) in enumerate(zip(self.ref_canvases, self._ref_images)):
+            if ref_image is None:
+                continue
+            canvas.delete("ref_overlay")
+            ref_w, ref_h = ref_image.width, ref_image.height
+            ref_scale = self.scale * (img_h / ref_h) * self.zoom
+            zoomed_size = (int(ref_w * ref_scale), int(ref_h * ref_scale))
+            ref_viewport_w = min(viewport_w, zoomed_size[0])
+            ref_viewport_h = min(viewport_h, zoomed_size[1])
+            ref_max_x = max(0, zoomed_size[0] - ref_viewport_w)
+            ref_max_y = max(0, zoomed_size[1] - ref_viewport_h)
+            ref_pan_x = int(pan_ratio_x * ref_max_x)
+            ref_pan_y = int(pan_ratio_y * ref_max_y)
+
+            # Draw completed polygons
+            for poly_idx, polygon in enumerate(self.polygons):
+                poly_key = (self.image_path, poly_idx)
+                class_idx = self.polygon_labels.get(poly_key)
+                color = self._color_for_class(class_idx) if class_idx else 'green'
+                display_pts = []
+                for ox, oy in polygon:
+                    rx = (ox / img_w) * ref_w * ref_scale - ref_pan_x
+                    ry = (oy / img_h) * ref_h * ref_scale - ref_pan_y
+                    display_pts.append((rx, ry))
+                if len(display_pts) > 2:
+                    flat = [coord for pt in display_pts for coord in pt]
+                    canvas.create_polygon(flat, outline=color, fill="", width=2, tags="ref_overlay")
+
+            # Draw in-progress polygon
+            if self.current_polygon:
+                pts = []
+                for ox, oy in self.current_polygon:
+                    rx = (ox / img_w) * ref_w * ref_scale - ref_pan_x
+                    ry = (oy / img_h) * ref_h * ref_scale - ref_pan_y
+                    pts.append((rx, ry))
+                for j, (px, py) in enumerate(pts):
+                    canvas.create_oval(px-3, py-3, px+3, py+3, fill="red", tags="ref_overlay")
+                    if j > 0:
+                        x1, y1 = pts[j-1]
+                        canvas.create_line(x1, y1, px, py, fill="red", width=2, tags="ref_overlay")
     
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -480,6 +568,7 @@ class PolygonAnnotationWithReference:
         if len(self.current_polygon) > 1:
             x1, y1 = self._original_to_display(*self.current_polygon[-2])
             self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
+        self._update_ref_overlays()
     
     def drag_vertex(self, event):
         if self.selected_polygon_idx is not None and self.selected_vertex_idx is not None:
@@ -487,6 +576,7 @@ class PolygonAnnotationWithReference:
             self.polygons[self.selected_polygon_idx][self.selected_vertex_idx] = (orig_x, orig_y)
             self.redraw_polygon(self.selected_polygon_idx)
             self.show_vertex_handles()
+            self._update_ref_overlays()
     
     def release_vertex(self, event):
         self.selected_vertex_idx = None
@@ -543,10 +633,12 @@ class PolygonAnnotationWithReference:
             
             self.canvas.delete("temp")
             self.current_polygon = []
+            self._update_ref_overlays()
     
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
+        self._update_ref_overlays()
     
     def clear_all(self):
         if not self.polygons:
@@ -563,6 +655,7 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("polygon")
         self.canvas.delete("temp")
         self.current_polygon = []
+        self._update_ref_overlays()
     
     def revert_annotations(self):
         if not hasattr(self, 'image_path'):
@@ -595,9 +688,22 @@ class PolygonAnnotationWithReference:
             self.canvas.delete("polygon")
             self.canvas.delete("vertex_handle")
             self.canvas.delete("temp")
+            # Remove annotations from reference images
+            for c in self.ref_canvases:
+                c.delete("all")
+                # Redraw just the image
+            self._refresh_reference_images_no_annotations()
         else:
             self.show_original_btn.config(relief=tk.RAISED, text="Show Original [T]")
             self.restore_annotations()
+            self._refresh_reference_images()
+
+    def _refresh_reference_images_no_annotations(self):
+        """Redraw reference images without any polygon overlays."""
+        saved = self._show_ref_annotations.get()
+        self._show_ref_annotations.set(False)
+        self._refresh_reference_images()
+        self._show_ref_annotations.set(saved)
     
     def _refresh_display(self):
         """Redraw the primary image and annotations at the current zoom level."""
@@ -790,6 +896,7 @@ class PolygonAnnotationWithReference:
                 line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
                 
                 self.polygon_items.append([line_id, poly_id])
+        self._update_ref_overlays()
     
     def select_class(self, class_name):
         self.selected_class = class_name
