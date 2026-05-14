@@ -1254,6 +1254,11 @@ class PolygonAnnotationWithReference:
         tk.Label(dialog, text="Enter project name:").pack(pady=10)
         entry = tk.Entry(dialog, width=40)
         entry.pack(pady=5)
+        # Pre-fill with existing project name if available
+        if self.loaded_data:
+            existing = self.loaded_data.get("project", {}).get("pname", "")
+            if existing:
+                entry.insert(0, existing)
         entry.focus()
         
         result = [None]
