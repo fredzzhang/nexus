@@ -1724,11 +1724,11 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
 
     summarise(output_path, image_dir, thresholds=thresholds)
 
-def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
+def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
     """Launch the polygon annotation tool.
 
     Args:
-        res: Window geometry string (default "1600x1000").
+        res: Window geometry string (default "1600x700").
         custom_classes: Optional dict mapping class index strings to class names
             (e.g. {"500": "Blueberry - Decay"}). Must not collide with BASE_DATA.
         asin: Product name to filter classes at startup. If None, prompts the user.
