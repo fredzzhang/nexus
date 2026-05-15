@@ -114,6 +114,12 @@ class PolygonAnnotationWithReference:
         self.filter_dropdown.set("All")
         self.filter_dropdown.bind("<<ComboboxSelected>>", self._apply_filter)
         
+        self._bookmark_var = tk.BooleanVar(value=False)
+        self._bookmark_check = tk.Checkbutton(self.top_frame, text="Bookmark", variable=self._bookmark_var,
+                                              command=self._toggle_bookmark)
+        self._bookmark_check.pack(side=tk.LEFT, padx=5)
+        tk.Button(self.top_frame, text="Export Bookmarks", command=self._export_bookmarks).pack(side=tk.LEFT)
+        
         self.canvas_frame = tk.Frame(root)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -159,6 +165,7 @@ class PolygonAnnotationWithReference:
         self.polygon_items = []
         self.image_files = []
         self._filtered_files = None
+        self._bookmarks = set()
         self.current_index = 0
         self.directory = None
         self.scale = 1.0
@@ -289,6 +296,7 @@ class PolygonAnnotationWithReference:
             self.filename_label.config(text=f"{os.path.basename(path)} ({filtered_idx + 1}/{len(active)})")
             self.file_dropdown.set(f"[{filtered_idx + 1}] {os.path.basename(path)}")
             self.current_polygon = []
+            self._bookmark_var.set(path in self._bookmarks)
             
             self.restore_annotations()
             self.load_reference_image(path)
@@ -1023,8 +1031,27 @@ class PolygonAnnotationWithReference:
         self.root.after(100, self.reflow_class_buttons)
         self._update_filter_options()
     
+    def _toggle_bookmark(self):
+        if not hasattr(self, 'image_path'):
+            return
+        if self._bookmark_var.get():
+            self._bookmarks.add(self.image_path)
+        else:
+            self._bookmarks.discard(self.image_path)
+
+    def _export_bookmarks(self):
+        if not self._bookmarks:
+            messagebox.showwarning("No Bookmarks", "No images have been bookmarked")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")])
+        if path:
+            names = sorted(os.path.basename(p) for p in self._bookmarks)
+            with open(path, "w") as f:
+                f.write("\n".join(names) + "\n")
+            messagebox.showinfo("Exported", f"{len(names)} bookmarked image(s) exported to {path}")
+
     def _update_filter_options(self):
-        options = ["All", "Unannotated"] + list(self.classes.keys())
+        options = ["All", "Bookmarked", "Unannotated"] + list(self.classes.keys())
         current = self.filter_dropdown.get()
         self.filter_dropdown['values'] = options
         if current not in options:
@@ -1037,6 +1064,8 @@ class PolygonAnnotationWithReference:
         selected = self.filter_dropdown.get()
         if selected == "All":
             filtered = self.image_files
+        elif selected == "Bookmarked":
+            filtered = [p for p in self.image_files if p in self._bookmarks]
         elif selected == "Unannotated":
             filtered = [p for p in self.image_files
                         if not self.all_annotations.get(p)]
