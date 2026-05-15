@@ -729,7 +729,19 @@ class PolygonAnnotationWithReference:
         self.canvas.config(width=viewport_w, height=viewport_h)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
         self.restore_annotations()
+        self._redraw_temp_polygon()
         self._refresh_reference_images()
+
+    def _redraw_temp_polygon(self):
+        """Redraw the in-progress polygon vertices and lines."""
+        if not self.current_polygon:
+            return
+        for i, (ox, oy) in enumerate(self.current_polygon):
+            x, y = self._original_to_display(ox, oy)
+            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="red", tags="temp")
+            if i > 0:
+                x1, y1 = self._original_to_display(*self.current_polygon[i-1])
+                self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
 
     def _clamp_pan(self):
         """Clamp pan offsets so the viewport stays within the zoomed image."""
