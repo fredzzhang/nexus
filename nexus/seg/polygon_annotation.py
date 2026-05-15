@@ -3,6 +3,7 @@
 Fred Zhang <frezz@amazon.com>
 """
 import os
+import sys
 import json
 import copy
 import random
@@ -75,6 +76,8 @@ class PolygonAnnotationWithReference:
         autosave_interval: Interval in minutes between automatic saves
             (default 5). The auto-save is written to a temporary file and
             removed after a successful manual save.
+        display_height: Fixed display height in pixels for the annotation
+            image (default 500). Images are scaled to this height.
 
     Controls:
         - Left-click: Add polygon vertex (click near first point to close).
@@ -84,7 +87,7 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
@@ -131,15 +134,15 @@ class PolygonAnnotationWithReference:
         self.edit_mode_btn = tk.Button(control_frame, text="Edit Mode: OFF [E]", command=self.toggle_edit_mode)
         self.edit_mode_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Manage Classes", command=self.manage_classes).pack(side=tk.LEFT)
-        tk.Label(control_frame, text="Class:").pack(side=tk.LEFT)
-        self.class_dropdown = ttk.Combobox(control_frame, state="readonly", width=15)
-        self.class_dropdown.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Load Annotations", command=self.load_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Save Annotations", command=self.save_annotations).pack(side=tk.LEFT)
         tk.Button(control_frame, text="Revert [R]", command=self.revert_annotations).pack(side=tk.LEFT)
         self.show_original_btn = tk.Button(control_frame, text="Show Original [T]", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
+        self._show_ref_annotations = tk.BooleanVar(value=False)
+        tk.Checkbutton(control_frame, text="Display annotations on ref.", variable=self._show_ref_annotations,
+                       command=self._on_ref_annotations_toggle).pack(side=tk.LEFT)
         
         self.class_buttons_canvas = tk.Canvas(self.btn_frame, height=100)
         self.class_buttons_canvas.pack(side=tk.TOP, fill=tk.X, pady=5)
@@ -163,8 +166,7 @@ class PolygonAnnotationWithReference:
         self.pan_x = 0.0
         self.pan_y = 0.0
         self._pan_start = None
-        self.max_width = 1200
-        self.max_height = 800
+        self.display_height = display_height
         self.all_annotations = {}
         self.classes = {}
         self.polygon_labels = {}
@@ -227,7 +229,7 @@ class PolygonAnnotationWithReference:
         return filename[len(prefix):len(filename) - len(suffix)]
 
     def load_directory(self):
-        directory = filedialog.askdirectory()
+        directory = filedialog.askdirectory(initialdir=os.path.dirname(os.path.abspath(sys.argv[0])))
         if directory:
             self.directory = directory
             all_files = sorted(f for f in os.listdir(directory)
@@ -259,8 +261,7 @@ class PolygonAnnotationWithReference:
             
             self.root.update_idletasks()
             
-            self.scale = min(self.max_width / self.image.width, 
-                           self.max_height / self.image.height, 1.0)
+            self.scale = self.display_height / self.image.height
             
             self.pan_x = 0.0
             self.pan_y = 0.0
@@ -289,8 +290,8 @@ class PolygonAnnotationWithReference:
             self.file_dropdown.set(f"[{filtered_idx + 1}] {os.path.basename(path)}")
             self.current_polygon = []
             
-            self.load_reference_image(path)
             self.restore_annotations()
+            self.load_reference_image(path)
     
     def _get_active_files(self):
         """Return the currently active file list (filtered or all)."""
@@ -398,12 +399,135 @@ class PolygonAnnotationWithReference:
                 draw.text((viewport_w // 2 - 40, viewport_h // 2), "No ref", fill='white')
                 photo = ImageTk.PhotoImage(placeholder)
                 canvas_w, canvas_h = viewport_w, viewport_h
+                ref_image = None
+                ref_pan_x, ref_pan_y = 0, 0
+                ref_scale = 1
 
             self.ref_photos.append(photo)
             canvas = tk.Canvas(self.canvas_frame, width=canvas_w, height=canvas_h)
             canvas.pack(side=tk.LEFT, anchor=tk.N)
             canvas.create_image(0, 0, anchor=tk.NW, image=photo)
             self.ref_canvases.append(canvas)
+
+            # Draw annotations on reference image
+            if self._show_ref_annotations.get() and ref_image is not None and hasattr(self, 'image_path'):
+                img_w, img_h = self.image.width, self.image.height
+                ref_w, ref_h = ref_image.width, ref_image.height
+                for poly_idx, polygon in enumerate(self.polygons):
+                    poly_key = (self.image_path, poly_idx)
+                    class_idx = self.polygon_labels.get(poly_key)
+                    color = self._color_for_class(class_idx) if class_idx else 'green'
+                    # Convert original coords to relative, then to ref display coords
+                    display_pts = []
+                    for ox, oy in polygon:
+                        rel_x = ox / img_w
+                        rel_y = oy / img_h
+                        rx = rel_x * ref_w * ref_scale - ref_pan_x
+                        ry = rel_y * ref_h * ref_scale - ref_pan_y
+                        display_pts.append((rx, ry))
+                    if len(display_pts) > 2:
+                        flat = [coord for pt in display_pts for coord in pt]
+                        canvas.create_polygon(flat, outline=color, fill="", width=2)
+
+    def _on_ref_annotations_toggle(self):
+        self._refresh_reference_images()
+
+    def _update_area_ratios(self):
+        """Update the area ratio display on class buttons."""
+        if not hasattr(self, 'image_path') or not self.image:
+            for name, btn in self.class_buttons.items():
+                btn.config(text=name)
+            return
+        img_area = self.image.width * self.image.height
+        if img_area == 0:
+            for name, btn in self.class_buttons.items():
+                btn.config(text=name)
+            return
+        # Accumulate area per class
+        class_areas = {}
+        for poly_idx, polygon in enumerate(self.polygons):
+            if len(polygon) < 3:
+                continue
+            poly_key = (self.image_path, poly_idx)
+            class_idx = self.polygon_labels.get(poly_key)
+            if class_idx is None:
+                continue
+            # Shoelace formula for polygon area
+            area = 0.0
+            n = len(polygon)
+            for i in range(n):
+                x1, y1 = polygon[i]
+                x2, y2 = polygon[(i + 1) % n]
+                area += x1 * y2 - x2 * y1
+            area = abs(area) / 2.0
+            class_areas[class_idx] = class_areas.get(class_idx, 0.0) + area
+        # Update button text
+        for name, btn in self.class_buttons.items():
+            class_idx = self.classes.get(name)
+            if class_idx and class_idx in class_areas:
+                ratio = class_areas[class_idx] / img_area * 100
+                btn.config(text=f"{name} ({ratio:.1f}%)")
+            else:
+                btn.config(text=name)
+
+    def _update_ref_overlays(self):
+        """Lightweight update of polygon overlays on reference canvases."""
+        if not self._show_ref_annotations.get():
+            return
+        if not hasattr(self, '_ref_images') or not self._ref_images:
+            return
+        if not hasattr(self, 'image_path') or not self.image:
+            return
+
+        img_w, img_h = self.image.width, self.image.height
+        viewport_w = int(img_w * self.scale)
+        viewport_h = int(img_h * self.scale)
+        effective_scale = self.scale * self.zoom
+        max_x = max(1, int(img_w * effective_scale) - viewport_w)
+        max_y = max(1, int(img_h * effective_scale) - viewport_h)
+        pan_ratio_x = self.pan_x / max_x if max_x > 0 else 0
+        pan_ratio_y = self.pan_y / max_y if max_y > 0 else 0
+
+        for i, (canvas, ref_image) in enumerate(zip(self.ref_canvases, self._ref_images)):
+            if ref_image is None:
+                continue
+            canvas.delete("ref_overlay")
+            ref_w, ref_h = ref_image.width, ref_image.height
+            ref_scale = self.scale * (img_h / ref_h) * self.zoom
+            zoomed_size = (int(ref_w * ref_scale), int(ref_h * ref_scale))
+            ref_viewport_w = min(viewport_w, zoomed_size[0])
+            ref_viewport_h = min(viewport_h, zoomed_size[1])
+            ref_max_x = max(0, zoomed_size[0] - ref_viewport_w)
+            ref_max_y = max(0, zoomed_size[1] - ref_viewport_h)
+            ref_pan_x = int(pan_ratio_x * ref_max_x)
+            ref_pan_y = int(pan_ratio_y * ref_max_y)
+
+            # Draw completed polygons
+            for poly_idx, polygon in enumerate(self.polygons):
+                poly_key = (self.image_path, poly_idx)
+                class_idx = self.polygon_labels.get(poly_key)
+                color = self._color_for_class(class_idx) if class_idx else 'green'
+                display_pts = []
+                for ox, oy in polygon:
+                    rx = (ox / img_w) * ref_w * ref_scale - ref_pan_x
+                    ry = (oy / img_h) * ref_h * ref_scale - ref_pan_y
+                    display_pts.append((rx, ry))
+                if len(display_pts) > 2:
+                    flat = [coord for pt in display_pts for coord in pt]
+                    canvas.create_polygon(flat, outline=color, fill="", width=2, tags="ref_overlay")
+
+            # Draw in-progress polygon
+            if self.current_polygon:
+                pts = []
+                for ox, oy in self.current_polygon:
+                    rx = (ox / img_w) * ref_w * ref_scale - ref_pan_x
+                    ry = (oy / img_h) * ref_h * ref_scale - ref_pan_y
+                    pts.append((rx, ry))
+                for j, (px, py) in enumerate(pts):
+                    canvas.create_oval(px-3, py-3, px+3, py+3, fill="red", tags="ref_overlay")
+                    if j > 0:
+                        x1, y1 = pts[j-1]
+                        canvas.create_line(x1, y1, px, py, fill="red", width=2, tags="ref_overlay")
     
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -483,6 +607,7 @@ class PolygonAnnotationWithReference:
         if len(self.current_polygon) > 1:
             x1, y1 = self._original_to_display(*self.current_polygon[-2])
             self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
+        self._update_ref_overlays()
     
     def drag_vertex(self, event):
         if self.selected_polygon_idx is not None and self.selected_vertex_idx is not None:
@@ -490,6 +615,8 @@ class PolygonAnnotationWithReference:
             self.polygons[self.selected_polygon_idx][self.selected_vertex_idx] = (orig_x, orig_y)
             self.redraw_polygon(self.selected_polygon_idx)
             self.show_vertex_handles()
+            self._update_ref_overlays()
+            self._update_area_ratios()
     
     def release_vertex(self, event):
         self.selected_vertex_idx = None
@@ -546,10 +673,13 @@ class PolygonAnnotationWithReference:
             
             self.canvas.delete("temp")
             self.current_polygon = []
-    
+            self._update_ref_overlays()
+            self._update_area_ratios()
+
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
+        self._update_ref_overlays()
     
     def clear_all(self):
         if not self.polygons:
@@ -566,6 +696,8 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("polygon")
         self.canvas.delete("temp")
         self.current_polygon = []
+        self._update_ref_overlays()
+        self._update_area_ratios()
     
     def revert_annotations(self):
         if not hasattr(self, 'image_path'):
@@ -598,9 +730,22 @@ class PolygonAnnotationWithReference:
             self.canvas.delete("polygon")
             self.canvas.delete("vertex_handle")
             self.canvas.delete("temp")
+            # Remove annotations from reference images
+            for c in self.ref_canvases:
+                c.delete("all")
+                # Redraw just the image
+            self._refresh_reference_images_no_annotations()
         else:
             self.show_original_btn.config(relief=tk.RAISED, text="Show Original [T]")
             self.restore_annotations()
+            self._refresh_reference_images()
+
+    def _refresh_reference_images_no_annotations(self):
+        """Redraw reference images without any polygon overlays."""
+        saved = self._show_ref_annotations.get()
+        self._show_ref_annotations.set(False)
+        self._refresh_reference_images()
+        self._show_ref_annotations.set(saved)
     
     def _refresh_display(self):
         """Redraw the primary image and annotations at the current zoom level."""
@@ -625,7 +770,19 @@ class PolygonAnnotationWithReference:
         self.canvas.config(width=viewport_w, height=viewport_h)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
         self.restore_annotations()
+        self._redraw_temp_polygon()
         self._refresh_reference_images()
+
+    def _redraw_temp_polygon(self):
+        """Redraw the in-progress polygon vertices and lines."""
+        if not self.current_polygon:
+            return
+        for i, (ox, oy) in enumerate(self.current_polygon):
+            x, y = self._original_to_display(ox, oy)
+            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="red", tags="temp")
+            if i > 0:
+                x1, y1 = self._original_to_display(*self.current_polygon[i-1])
+                self.canvas.create_line(x1, y1, x, y, fill="red", width=2, tags="temp")
 
     def _clamp_pan(self):
         """Clamp pan offsets so the viewport stays within the zoomed image."""
@@ -793,10 +950,11 @@ class PolygonAnnotationWithReference:
                 line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
                 
                 self.polygon_items.append([line_id, poly_id])
+        self._update_ref_overlays()
+        self._update_area_ratios()
     
     def select_class(self, class_name):
         self.selected_class = class_name
-        self.class_dropdown.set(class_name)
         for name, btn in self.class_buttons.items():
             if name == class_name:
                 btn.config(relief=tk.SUNKEN)
@@ -933,7 +1091,7 @@ class PolygonAnnotationWithReference:
             self.classes = {name: idx for name, idx in all_classes.items()
                            if name.lower().startswith(produce_lower + " - ")}
         else:
-            produce_name = self.prompt_produce_name()
+            produce_name = self.prompt_produce_name(all_classes)
             if produce_name:
                 produce_lower = produce_name.lower()
                 self.classes = {name: idx for name, idx in all_classes.items()
@@ -941,26 +1099,44 @@ class PolygonAnnotationWithReference:
             else:
                 self.classes = all_classes
 
-        self.class_dropdown['values'] = list(self.classes.keys())
         self.update_class_buttons()
         self.loaded_data = data
     
-    def prompt_produce_name(self):
+    def prompt_produce_name(self, all_classes=None):
+        """Prompt user to select a category to filter classes.
+        
+        Args:
+            all_classes: Optional dict of all available classes to extract
+                category names from. If None, shows only a text entry.
+        """
         dialog = tk.Toplevel(self.root)
-        dialog.title("Filter Classes by Produce")
-        dialog.geometry("600x120")
+        dialog.title("Filter Classes by Category")
+        dialog.geometry("600x150")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        tk.Label(dialog, text="Enter ASIN name (not case sensitive) to filter classes, e.g., strawberry:").pack(pady=10)
-        entry = tk.Entry(dialog, width=30)
-        entry.pack(pady=5)
-        entry.focus()
+        tk.Label(dialog, text="Select or enter category name to filter classes:").pack(pady=10)
+        
+        # Extract unique category prefixes from class names
+        categories = []
+        if all_classes:
+            prefixes = set()
+            for name in all_classes:
+                if " - " in name:
+                    prefixes.add(name.split(" - ", 1)[0])
+            categories = sorted(prefixes)
+        
+        combo = ttk.Combobox(dialog, values=["All"] + categories, width=30)
+        combo.pack(pady=5)
+        if categories:
+            combo.set(categories[0])
+        combo.focus()
         
         result = [None]
         
         def on_ok():
-            result[0] = entry.get().strip()
+            val = combo.get().strip()
+            result[0] = None if val == "All" else val
             dialog.destroy()
         
         def on_cancel():
@@ -971,7 +1147,7 @@ class PolygonAnnotationWithReference:
         tk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
         
-        entry.bind('<Return>', lambda e: on_ok())
+        combo.bind('<Return>', lambda e: on_ok())
         
         dialog.wait_window()
         return result[0]
@@ -996,9 +1172,6 @@ class PolygonAnnotationWithReference:
             name = name_entry.get().strip()
             if idx and name:
                 self.classes[name] = idx
-                self.class_dropdown['values'] = list(self.classes.keys())
-                if not self.class_dropdown.get():
-                    self.class_dropdown.set(name)
                 refresh_listbox()
                 idx_entry.delete(0, tk.END)
                 name_entry.delete(0, tk.END)
@@ -1018,7 +1191,6 @@ class PolygonAnnotationWithReference:
                         if self.polygon_labels[key] == self.classes.get(old_name):
                             self.polygon_labels[key] = new_idx
                     
-                    self.class_dropdown['values'] = list(self.classes.keys())
                     refresh_listbox()
                     idx_entry.delete(0, tk.END)
                     name_entry.delete(0, tk.END)
@@ -1075,7 +1247,7 @@ class PolygonAnnotationWithReference:
                 all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
                 
                 # Prompt for produce name to filter classes
-                produce_name = self.prompt_produce_name()
+                produce_name = self.prompt_produce_name(all_classes)
                 if produce_name:
                     produce_lower = produce_name.lower()
                     self.classes = {name: idx for name, idx in all_classes.items() 
@@ -1083,7 +1255,6 @@ class PolygonAnnotationWithReference:
                 else:
                     self.classes = all_classes
                 
-                self.class_dropdown['values'] = list(self.classes.keys())
                 self.update_class_buttons()
             
             self.root.update_idletasks()
@@ -1092,6 +1263,7 @@ class PolygonAnnotationWithReference:
             
             loaded_annotations = {}
             self.polygon_labels = {}
+            missing_count = 0
             
             for file_id, file_info in file_dict.items():
                 fname = file_info["fname"]
@@ -1120,12 +1292,23 @@ class PolygonAnnotationWithReference:
                             poly_idx += 1
                     
                     loaded_annotations[img_path] = polygons
+                else:
+                    # Check if this file has any annotations
+                    for key in metadata_dict:
+                        if key.startswith(f"{file_id}_"):
+                            missing_count += 1
+                            break
             
             self.all_annotations = loaded_annotations
             self._saved_annotations = copy.deepcopy(loaded_annotations)
             self._saved_labels = copy.deepcopy(self.polygon_labels)
             self.loaded_data = data
             self.restore_annotations()
+            if missing_count > 0:
+                messagebox.showwarning(
+                    "Missing Images",
+                    f"{missing_count} annotated image(s) in the annotation file "
+                    f"were not found in the image directory and will be skipped.")
             messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
     
     def prompt_project_name(self):
@@ -1138,6 +1321,11 @@ class PolygonAnnotationWithReference:
         tk.Label(dialog, text="Enter project name:").pack(pady=10)
         entry = tk.Entry(dialog, width=40)
         entry.pack(pady=5)
+        # Pre-fill with existing project name if available
+        if self.loaded_data:
+            existing = self.loaded_data.get("project", {}).get("pname", "")
+            if existing:
+                entry.insert(0, existing)
         entry.focus()
         
         result = [None]
@@ -1403,7 +1591,6 @@ class PolygonAnnotationWithReference:
                                if name.lower().startswith(asin_lower + " - ")}
             else:
                 self.classes = all_classes
-            self.class_dropdown['values'] = list(self.classes.keys())
             self.update_class_buttons()
         loaded_annotations = {}
         self.polygon_labels = {}
@@ -1537,7 +1724,7 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
 
     summarise(output_path, image_dir, thresholds=thresholds)
 
-def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5):
+def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1553,10 +1740,12 @@ def polygon_annotation_with_reference(res="1600x1000", custom_classes=None, asin
 
             If None, all images are annotation targets with no references.
         autosave_interval: Interval in minutes between automatic saves (default 5).
+        display_height: Fixed display height in pixels for the annotation image
+            (default 500). Images are scaled to this height.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
