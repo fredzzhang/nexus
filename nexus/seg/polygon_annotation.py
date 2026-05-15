@@ -432,6 +432,44 @@ class PolygonAnnotationWithReference:
     def _on_ref_annotations_toggle(self):
         self._refresh_reference_images()
 
+    def _update_area_ratios(self):
+        """Update the area ratio display on class buttons."""
+        if not hasattr(self, 'image_path') or not self.image:
+            for name, btn in self.class_buttons.items():
+                btn.config(text=name)
+            return
+        img_area = self.image.width * self.image.height
+        if img_area == 0:
+            for name, btn in self.class_buttons.items():
+                btn.config(text=name)
+            return
+        # Accumulate area per class
+        class_areas = {}
+        for poly_idx, polygon in enumerate(self.polygons):
+            if len(polygon) < 3:
+                continue
+            poly_key = (self.image_path, poly_idx)
+            class_idx = self.polygon_labels.get(poly_key)
+            if class_idx is None:
+                continue
+            # Shoelace formula for polygon area
+            area = 0.0
+            n = len(polygon)
+            for i in range(n):
+                x1, y1 = polygon[i]
+                x2, y2 = polygon[(i + 1) % n]
+                area += x1 * y2 - x2 * y1
+            area = abs(area) / 2.0
+            class_areas[class_idx] = class_areas.get(class_idx, 0.0) + area
+        # Update button text
+        for name, btn in self.class_buttons.items():
+            class_idx = self.classes.get(name)
+            if class_idx and class_idx in class_areas:
+                ratio = class_areas[class_idx] / img_area * 100
+                btn.config(text=f"{name} ({ratio:.1f}%)")
+            else:
+                btn.config(text=name)
+
     def _update_ref_overlays(self):
         """Lightweight update of polygon overlays on reference canvases."""
         if not self._show_ref_annotations.get():
@@ -578,6 +616,7 @@ class PolygonAnnotationWithReference:
             self.redraw_polygon(self.selected_polygon_idx)
             self.show_vertex_handles()
             self._update_ref_overlays()
+            self._update_area_ratios()
     
     def release_vertex(self, event):
         self.selected_vertex_idx = None
@@ -635,7 +674,8 @@ class PolygonAnnotationWithReference:
             self.canvas.delete("temp")
             self.current_polygon = []
             self._update_ref_overlays()
-    
+            self._update_area_ratios()
+
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
@@ -657,6 +697,7 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("temp")
         self.current_polygon = []
         self._update_ref_overlays()
+        self._update_area_ratios()
     
     def revert_annotations(self):
         if not hasattr(self, 'image_path'):
@@ -910,6 +951,7 @@ class PolygonAnnotationWithReference:
                 
                 self.polygon_items.append([line_id, poly_id])
         self._update_ref_overlays()
+        self._update_area_ratios()
     
     def select_class(self, class_name):
         self.selected_class = class_name
