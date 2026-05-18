@@ -87,12 +87,13 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
         self._asin = asin
         self._name_format = name_format
+        self._clean_class = clean_class
         
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -212,6 +213,7 @@ class PolygonAnnotationWithReference:
         self.root.bind("=", lambda e: self.zoom_in())
         self.root.bind("-", lambda e: self.zoom_out())
         self.root.bind("0", lambda e: self.zoom_reset())
+        self.root.bind("a", lambda e: self._add_clean_annotation())
         
         self.load_base_classes()
         self._check_autosave()
@@ -710,6 +712,8 @@ class PolygonAnnotationWithReference:
     def revert_annotations(self):
         if not hasattr(self, 'image_path'):
             return
+        if not messagebox.askyesno("Revert", "Revert annotations to last saved state?"):
+            return
         path = self.image_path
         if path in self._saved_annotations:
             self.all_annotations[path] = copy.deepcopy(self._saved_annotations[path])
@@ -992,20 +996,24 @@ class PolygonAnnotationWithReference:
         for widget in self.class_buttons_frame.winfo_children():
             widget.grid_forget()
         
-        x, row, col = 0, 0, 0
+        # Measure button widths first
+        btn_widths = {}
         for name, btn in self.class_buttons.items():
-            btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            btn.grid(row=0, column=0)
             self.class_buttons_frame.update_idletasks()
-            btn_width = btn.winfo_width()
-            x += btn_width + 4
-            
-            if x > canvas_width - 20 and col > 0:
+            btn_widths[name] = btn.winfo_width()
+            btn.grid_forget()
+        
+        row, col, x = 0, 0, 0
+        for name, btn in self.class_buttons.items():
+            w = btn_widths[name] + 4
+            if x + w > canvas_width - 20 and col > 0:
                 row += 1
                 col = 0
-                x = btn_width + 4
-                btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
-            else:
-                col += 1
+                x = 0
+            btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            x += w
+            col += 1
         
         self.class_buttons_frame.update_idletasks()
         self.class_buttons_canvas.config(height=min(self.class_buttons_frame.winfo_height() + 10, 150))
