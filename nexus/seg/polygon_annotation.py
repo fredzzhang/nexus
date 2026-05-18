@@ -686,6 +686,36 @@ class PolygonAnnotationWithReference:
             self._update_ref_overlays()
             self._update_area_ratios()
 
+    def _add_clean_annotation(self):
+        """Add a small triangle in the centre of the image with the clean class."""
+        if self._clean_class is None:
+            return
+        if not hasattr(self, 'image_path') or not self.image:
+            return
+        # Create a small triangle at the centre (5% of image size)
+        cx, cy = self.image.width / 2, self.image.height / 2
+        size = min(self.image.width, self.image.height) * 0.05
+        triangle = [
+            (cx, cy - size),
+            (cx - size, cy + size),
+            (cx + size, cy + size),
+        ]
+        poly_idx = len(self.polygons)
+        self.polygons.append(triangle)
+        poly_key = (self.image_path, poly_idx)
+        self.polygon_labels[poly_key] = self._clean_class
+        # Draw it
+        color = self._color_for_class(self._clean_class)
+        display_pts = [self._original_to_display(ox, oy) for ox, oy in triangle]
+        flat_coords = [coord for pt in display_pts for coord in pt]
+        poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
+        x1, y1 = display_pts[-1]
+        x2, y2 = display_pts[0]
+        line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
+        self.polygon_items.append([line_id, poly_id])
+        self._update_ref_overlays()
+        self._update_area_ratios()
+
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
@@ -1262,6 +1292,21 @@ class PolygonAnnotationWithReference:
         
         refresh_listbox()
         
+        # Clean class setting
+        clean_frame = tk.Frame(dialog)
+        clean_frame.grid(row=5, column=0, columnspan=2, pady=5, sticky="ew")
+        tk.Label(clean_frame, text="Clean class index [A]:").pack(side=tk.LEFT, padx=5)
+        clean_entry = tk.Entry(clean_frame, width=10)
+        clean_entry.pack(side=tk.LEFT, padx=5)
+        if self._clean_class:
+            clean_entry.insert(0, self._clean_class)
+        def set_clean():
+            val = clean_entry.get().strip()
+            self._clean_class = val if val else None
+        tk.Button(clean_frame, text="Set", command=set_clean).pack(side=tk.LEFT, padx=5)
+        tk.Button(clean_frame, text="Clear", command=lambda: (clean_entry.delete(0, tk.END),
+                                                              setattr(self, '_clean_class', None))).pack(side=tk.LEFT, padx=5)
+        
         dialog.grid_rowconfigure(4, weight=1)
         dialog.grid_columnconfigure(1, weight=1)
     
@@ -1761,7 +1806,7 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
 
     summarise(output_path, image_dir, thresholds=thresholds)
 
-def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
+def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1779,10 +1824,13 @@ def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin=
         autosave_interval: Interval in minutes between automatic saves (default 5).
         display_height: Fixed display height in pixels for the annotation image
             (default 500). Images are scaled to this height.
+        clean_class: Optional class index string for the "clean" annotation.
+            When set, pressing 'A' adds a small triangle at the image centre
+            with this class. Useful to mark images as reviewed without defects.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
