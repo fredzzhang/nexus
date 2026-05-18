@@ -87,12 +87,13 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
         self._asin = asin
         self._name_format = name_format
+        self._clean_class = clean_class
         
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -212,6 +213,7 @@ class PolygonAnnotationWithReference:
         self.root.bind("=", lambda e: self.zoom_in())
         self.root.bind("-", lambda e: self.zoom_out())
         self.root.bind("0", lambda e: self.zoom_reset())
+        self.root.bind("a", lambda e: self._add_clean_annotation())
         
         self.load_base_classes()
         self._check_autosave()
@@ -418,7 +420,7 @@ class PolygonAnnotationWithReference:
             self.ref_canvases.append(canvas)
 
             # Draw annotations on reference image
-            if self._show_ref_annotations.get() and ref_image is not None and hasattr(self, 'image_path'):
+            if self._show_ref_annotations.get() and not self.showing_original and ref_image is not None and hasattr(self, 'image_path'):
                 img_w, img_h = self.image.width, self.image.height
                 ref_w, ref_h = ref_image.width, ref_image.height
                 for poly_idx, polygon in enumerate(self.polygons):
@@ -684,6 +686,36 @@ class PolygonAnnotationWithReference:
             self._update_ref_overlays()
             self._update_area_ratios()
 
+    def _add_clean_annotation(self):
+        """Add a small triangle in the centre of the image with the clean class."""
+        if self._clean_class is None:
+            return
+        if not hasattr(self, 'image_path') or not self.image:
+            return
+        # Create a small triangle at the centre (5% of image size)
+        cx, cy = self.image.width / 2, self.image.height / 2
+        size = min(self.image.width, self.image.height) * 0.05
+        triangle = [
+            (cx, cy - size),
+            (cx - size, cy + size),
+            (cx + size, cy + size),
+        ]
+        poly_idx = len(self.polygons)
+        self.polygons.append(triangle)
+        poly_key = (self.image_path, poly_idx)
+        self.polygon_labels[poly_key] = self._clean_class
+        # Draw it
+        color = self._color_for_class(self._clean_class)
+        display_pts = [self._original_to_display(ox, oy) for ox, oy in triangle]
+        flat_coords = [coord for pt in display_pts for coord in pt]
+        poly_id = self.canvas.create_polygon(flat_coords, outline=color, fill="", width=2, tags="polygon")
+        x1, y1 = display_pts[-1]
+        x2, y2 = display_pts[0]
+        line_id = self.canvas.create_line(x1, y1, x2, y2, fill=color, width=2, tags="polygon")
+        self.polygon_items.append([line_id, poly_id])
+        self._update_ref_overlays()
+        self._update_area_ratios()
+
     def clear_current(self):
         self.canvas.delete("temp")
         self.current_polygon = []
@@ -709,6 +741,8 @@ class PolygonAnnotationWithReference:
     
     def revert_annotations(self):
         if not hasattr(self, 'image_path'):
+            return
+        if not messagebox.askyesno("Revert", "Revert annotations to last saved state?"):
             return
         path = self.image_path
         if path in self._saved_annotations:
@@ -777,8 +811,9 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("all")
         self.canvas.config(width=viewport_w, height=viewport_h)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        self.restore_annotations()
-        self._redraw_temp_polygon()
+        if not self.showing_original:
+            self.restore_annotations()
+            self._redraw_temp_polygon()
         self._refresh_reference_images()
 
     def _redraw_temp_polygon(self):
@@ -992,20 +1027,24 @@ class PolygonAnnotationWithReference:
         for widget in self.class_buttons_frame.winfo_children():
             widget.grid_forget()
         
-        x, row, col = 0, 0, 0
+        # Measure button widths first
+        btn_widths = {}
         for name, btn in self.class_buttons.items():
-            btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            btn.grid(row=0, column=0)
             self.class_buttons_frame.update_idletasks()
-            btn_width = btn.winfo_width()
-            x += btn_width + 4
-            
-            if x > canvas_width - 20 and col > 0:
+            btn_widths[name] = btn.winfo_width()
+            btn.grid_forget()
+        
+        row, col, x = 0, 0, 0
+        for name, btn in self.class_buttons.items():
+            w = btn_widths[name] + 4
+            if x + w > canvas_width - 20 and col > 0:
                 row += 1
                 col = 0
-                x = btn_width + 4
-                btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
-            else:
-                col += 1
+                x = 0
+            btn.grid(row=row, column=col, padx=2, pady=2, sticky=tk.W)
+            x += w
+            col += 1
         
         self.class_buttons_frame.update_idletasks()
         self.class_buttons_canvas.config(height=min(self.class_buttons_frame.winfo_height() + 10, 150))
@@ -1253,6 +1292,21 @@ class PolygonAnnotationWithReference:
         listbox.bind('<<ListboxSelect>>', on_select)
         
         refresh_listbox()
+        
+        # Clean class setting
+        clean_frame = tk.Frame(dialog)
+        clean_frame.grid(row=5, column=0, columnspan=2, pady=5, sticky="ew")
+        tk.Label(clean_frame, text="Clean class index [A]:").pack(side=tk.LEFT, padx=5)
+        clean_entry = tk.Entry(clean_frame, width=10)
+        clean_entry.pack(side=tk.LEFT, padx=5)
+        if self._clean_class:
+            clean_entry.insert(0, self._clean_class)
+        def set_clean():
+            val = clean_entry.get().strip()
+            self._clean_class = val if val else None
+        tk.Button(clean_frame, text="Set", command=set_clean).pack(side=tk.LEFT, padx=5)
+        tk.Button(clean_frame, text="Clear", command=lambda: (clean_entry.delete(0, tk.END),
+                                                              setattr(self, '_clean_class', None))).pack(side=tk.LEFT, padx=5)
         
         dialog.grid_rowconfigure(4, weight=1)
         dialog.grid_columnconfigure(1, weight=1)
@@ -1753,7 +1807,7 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
 
     summarise(output_path, image_dir, thresholds=thresholds)
 
-def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500):
+def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1771,10 +1825,13 @@ def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin=
         autosave_interval: Interval in minutes between automatic saves (default 5).
         display_height: Fixed display height in pixels for the annotation image
             (default 500). Images are scaled to this height.
+        clean_class: Optional class index string for the "clean" annotation.
+            When set, pressing 'A' adds a small triangle at the image centre
+            with this class. Useful to mark images as reviewed without defects.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
