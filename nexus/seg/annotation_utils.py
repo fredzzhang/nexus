@@ -114,18 +114,29 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
     summarise(output_path, image_dir, thresholds=thresholds)
 
 
-def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=False):
-    """Remap class indices in an annotation file.
+def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=None):
+    """Remap class indices and names in an annotation file.
 
     Args:
         annotation_path: Path to the input annotation JSON file.
         output_path: Path to write the remapped JSON file.
-        class_mapping: Dict mapping old class index strings to new class index
-            strings (e.g. {"401": "1", "402": "2"}). Polygons whose class is
-            not in this mapping are either kept as-is or dropped, depending
-            on *drop_unmapped*.
-        drop_unmapped: If True, polygons with classes not in *class_mapping*
-            are removed. If False (default), they are kept unchanged.
+        class_mapping: Dict mapping new class index strings to
+            ``[new_name, old_index]`` pairs. For example::
+
+                {
+                    "1": ["Sedan", "401"],
+                    "2": ["Ute", "402"],
+                    "3": ["Van", "403"],
+                    "4": ["Waggon", None]
+                }
+
+            Polygons with old index ``"401"`` become new index ``"1"``
+            with name ``"Sedan"``, etc. If old_index is None, a new class
+            is added without remapping any polygons.
+        drop_unmapped: Controls handling of polygons whose class is not
+            in the mapping. If True, they are removed. If False, they are
+            kept unchanged. If None (default), the user is prompted to
+            confirm dropping when unmapped classes are encountered.
     """
     with open(annotation_path, "r") as f:
         data = json.load(f)
@@ -133,13 +144,37 @@ def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=Fal
     metadata = data.get("metadata", {})
     old_options = data.get("attribute", {}).get("1", {}).get("options", {})
 
-    # Build new options: mapped classes get new indices, unmapped are kept or dropped
+    # Build old_index -> new_index lookup
+    old_to_new = {}
     new_options = {}
-    for old_idx, name in old_options.items():
-        if old_idx in class_mapping:
-            new_options[class_mapping[old_idx]] = name
-        elif not drop_unmapped:
-            new_options[old_idx] = name
+    for new_idx, (new_name, old_idx) in class_mapping.items():
+        if old_idx is not None:
+            old_to_new[old_idx] = new_idx
+        new_options[new_idx] = new_name
+
+    # Check for unmapped classes
+    mapped_old_indices = set(old_to_new.keys())
+    used_classes = {meta.get("av", {}).get("1") for meta in metadata.values()}
+    used_classes.discard(None)
+    unmapped = used_classes - mapped_old_indices
+    if unmapped and drop_unmapped is None:
+        unmapped_names = [f"{idx} ({old_options.get(idx, 'Unknown')})" for idx in sorted(unmapped)]
+        print(f"The following classes are not in the mapping and will be dropped:")
+        for name in unmapped_names:
+            print(f"  {name}")
+        response = input("Proceed? [Y/n] ").strip().lower()
+        if response and response != "y":
+            print("Aborted.")
+            return
+        drop_unmapped = True
+    elif drop_unmapped is None:
+        drop_unmapped = False
+
+    # Keep unmapped classes in options if not dropping
+    if not drop_unmapped:
+        for old_idx, name in old_options.items():
+            if old_idx not in old_to_new:
+                new_options[old_idx] = name
 
     # Remap metadata
     new_metadata = {}
@@ -147,9 +182,9 @@ def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=Fal
         av = meta.get("av", {})
         class_idx = av.get("1")
         if class_idx is not None:
-            if class_idx in class_mapping:
+            if class_idx in old_to_new:
                 av = dict(av)
-                av["1"] = class_mapping[class_idx]
+                av["1"] = old_to_new[class_idx]
             elif drop_unmapped:
                 continue
         new_metadata[key] = {"vid": meta["vid"], "xy": meta["xy"], "av": av}
