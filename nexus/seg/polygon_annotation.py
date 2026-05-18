@@ -420,7 +420,7 @@ class PolygonAnnotationWithReference:
             self.ref_canvases.append(canvas)
 
             # Draw annotations on reference image
-            if self._show_ref_annotations.get() and ref_image is not None and hasattr(self, 'image_path'):
+            if self._show_ref_annotations.get() and not self.showing_original and ref_image is not None and hasattr(self, 'image_path'):
                 img_w, img_h = self.image.width, self.image.height
                 ref_w, ref_h = ref_image.width, ref_image.height
                 for poly_idx, polygon in enumerate(self.polygons):
@@ -811,8 +811,9 @@ class PolygonAnnotationWithReference:
         self.canvas.delete("all")
         self.canvas.config(width=viewport_w, height=viewport_h)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        self.restore_annotations()
-        self._redraw_temp_polygon()
+        if not self.showing_original:
+            self.restore_annotations()
+            self._redraw_temp_polygon()
         self._refresh_reference_images()
 
     def _redraw_temp_polygon(self):
