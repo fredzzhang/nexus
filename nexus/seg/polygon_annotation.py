@@ -1028,10 +1028,29 @@ class PolygonAnnotationWithReference:
 
     def _on_canvas_frame_configure(self, event):
         self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        self._update_scroll_state()
 
     def _on_scroll_canvas_configure(self, event):
         # Set the inner frame height to match the scroll canvas height
         self._scroll_canvas.itemconfig(self._scroll_canvas_window, height=event.height)
+        self._update_scroll_state()
+
+    def _update_scroll_state(self):
+        """Disable horizontal scrolling when content fits within the viewport."""
+        self._scroll_canvas.update_idletasks()
+        bbox = self._scroll_canvas.bbox("all")
+        if bbox:
+            content_width = bbox[2] - bbox[0]
+        else:
+            content_width = 0
+        viewport_width = self._scroll_canvas.winfo_width()
+        if content_width <= viewport_width:
+            self._scroll_canvas.xview_moveto(0)
+            self._scroll_canvas.configure(xscrollcommand=lambda *args: None)
+            self._hscrollbar.configure(command=lambda *args: None)
+        else:
+            self._scroll_canvas.configure(xscrollcommand=self._hscrollbar.set)
+            self._hscrollbar.configure(command=self._scroll_canvas.xview)
     
     def reflow_class_buttons(self):
         if not self.class_buttons:
