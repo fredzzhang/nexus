@@ -121,8 +121,18 @@ class PolygonAnnotationWithReference:
         self._bookmark_check.pack(side=tk.LEFT, padx=5)
         tk.Button(self.top_frame, text="Export Bookmarks", command=self._export_bookmarks).pack(side=tk.LEFT)
         
-        self.canvas_frame = tk.Frame(root)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        self._scroll_frame = tk.Frame(root)
+        self._scroll_frame.pack(fill=tk.BOTH, expand=True)
+        self._scroll_canvas = tk.Canvas(self._scroll_frame)
+        self._scroll_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._hscrollbar = tk.Scrollbar(self._scroll_frame, orient=tk.HORIZONTAL, command=self._scroll_canvas.xview)
+        self._hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self._scroll_canvas.configure(xscrollcommand=self._hscrollbar.set)
+        
+        self.canvas_frame = tk.Frame(self._scroll_canvas)
+        self._scroll_canvas_window = self._scroll_canvas.create_window(0, 0, window=self.canvas_frame, anchor=tk.NW)
+        self.canvas_frame.bind("<Configure>", self._on_canvas_frame_configure)
+        self._scroll_canvas.bind("<Configure>", self._on_scroll_canvas_configure)
         
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
         self.canvas.pack(side=tk.LEFT, anchor=tk.N)
@@ -1015,6 +1025,13 @@ class PolygonAnnotationWithReference:
     
     def on_canvas_configure(self, event):
         self.reflow_class_buttons()
+
+    def _on_canvas_frame_configure(self, event):
+        self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+
+    def _on_scroll_canvas_configure(self, event):
+        # Set the inner frame height to match the scroll canvas height
+        self._scroll_canvas.itemconfig(self._scroll_canvas_window, height=event.height)
     
     def reflow_class_buttons(self):
         if not self.class_buttons:
