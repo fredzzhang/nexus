@@ -42,7 +42,7 @@ def generate_with_nano_banana(
     prompt: str,
     fal_key_path: str | None = None,
     reference_images: list[str] | None = None,
-    resolution: str = "1K",
+    resolution: str = "0.5K",
     workers: int = 4,
 ):
     """Batch-edit images using the fal.ai Nano Banana 2 model.
