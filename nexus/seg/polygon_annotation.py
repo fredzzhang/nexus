@@ -121,8 +121,18 @@ class PolygonAnnotationWithReference:
         self._bookmark_check.pack(side=tk.LEFT, padx=5)
         tk.Button(self.top_frame, text="Export Bookmarks", command=self._export_bookmarks).pack(side=tk.LEFT)
         
-        self.canvas_frame = tk.Frame(root)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        self._scroll_frame = tk.Frame(root)
+        self._scroll_frame.pack(fill=tk.BOTH, expand=True)
+        self._scroll_canvas = tk.Canvas(self._scroll_frame)
+        self._scroll_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._hscrollbar = tk.Scrollbar(self._scroll_frame, orient=tk.HORIZONTAL, command=self._scroll_canvas.xview)
+        self._hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self._scroll_canvas.configure(xscrollcommand=self._hscrollbar.set)
+        
+        self.canvas_frame = tk.Frame(self._scroll_canvas)
+        self._scroll_canvas_window = self._scroll_canvas.create_window(0, 0, window=self.canvas_frame, anchor=tk.NW)
+        self.canvas_frame.bind("<Configure>", self._on_canvas_frame_configure)
+        self._scroll_canvas.bind("<Configure>", self._on_scroll_canvas_configure)
         
         self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
         self.canvas.pack(side=tk.LEFT, anchor=tk.N)
@@ -1015,6 +1025,32 @@ class PolygonAnnotationWithReference:
     
     def on_canvas_configure(self, event):
         self.reflow_class_buttons()
+
+    def _on_canvas_frame_configure(self, event):
+        self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        self._update_scroll_state()
+
+    def _on_scroll_canvas_configure(self, event):
+        # Set the inner frame height to match the scroll canvas height
+        self._scroll_canvas.itemconfig(self._scroll_canvas_window, height=event.height)
+        self._update_scroll_state()
+
+    def _update_scroll_state(self):
+        """Disable horizontal scrolling when content fits within the viewport."""
+        self._scroll_canvas.update_idletasks()
+        bbox = self._scroll_canvas.bbox("all")
+        if bbox:
+            content_width = bbox[2] - bbox[0]
+        else:
+            content_width = 0
+        viewport_width = self._scroll_canvas.winfo_width()
+        if content_width <= viewport_width:
+            self._scroll_canvas.xview_moveto(0)
+            self._scroll_canvas.configure(xscrollcommand=lambda *args: None)
+            self._hscrollbar.configure(command=lambda *args: None)
+        else:
+            self._scroll_canvas.configure(xscrollcommand=self._hscrollbar.set)
+            self._hscrollbar.configure(command=self._scroll_canvas.xview)
     
     def reflow_class_buttons(self):
         if not self.class_buttons:
