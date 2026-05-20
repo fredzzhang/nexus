@@ -3,14 +3,13 @@
 Fred Zhang <frezz@amazon.com>
 """
 
-import argparse
 import os
+import argparse
+import requests
+import fal_client
+
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import fal_client
-import requests
-
 
 def upload_and_edit(image_path: Path, prompt: str, output_dir: Path, resolution: str, ref_urls: list[str]):
     """Upload a local image to fal.ai and run the Nano Banana 2 edit model.
