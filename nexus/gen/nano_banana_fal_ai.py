@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--output-dir", required=True, help="Directory to save generated images")
     parser.add_argument("--prompt", required=True, help="Editing prompt to apply to all images")
     parser.add_argument("--reference-images", nargs="*", default=[], help="Reference image paths included with every request")
-    parser.add_argument("--resolution", default="1K", choices=["0.5K", "1K", "2K", "4K"], help="Output resolution")
+    parser.add_argument("--resolution", default="0.5K", choices=["0.5K", "1K", "2K", "4K"], help="Output resolution")
     parser.add_argument("--fal-key-path", default=None, help="Path to file containing fal.ai API key")
     parser.add_argument("--workers", type=int, default=4, help="Number of parallel requests")
     args = parser.parse_args()
