@@ -1,1 +1,2 @@
 from .nano_banana_fal_ai import generate_with_nano_banana
+from .claude_bedrock import generate_with_claude, batch_generate_with_claude
