@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-_DEFAULT_MODEL = "anthropic.claude-opus-4-7"
+_DEFAULT_MODEL = "us.anthropic.claude-opus-4-20250514-v1:0"
 _DEFAULT_REGION = "us-east-1"
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _MEDIA_TYPES = {
