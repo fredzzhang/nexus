@@ -35,7 +35,7 @@ def _build_messages(prompt: str, image_paths: list[str] | None = None) -> list[d
     return [{"role": "user", "content": content}]
 
 
-def generate_with_claude(
+def single_inference_with_claude(
     prompt: str,
     image_paths: list[str] | None = None,
     model_id: str = _DEFAULT_MODEL,
@@ -68,7 +68,7 @@ def generate_with_claude(
     return result["content"][0]["text"]
 
 
-def batch_generate_with_claude(
+def generate_with_claude(
     input_dir: str,
     output_dir: str,
     prompt: str,
@@ -105,7 +105,7 @@ def batch_generate_with_claude(
     print(f"Processing {len(images)} images with {workers} workers...")
 
     def _process(image_path: Path):
-        text = generate_with_claude(
+        text = single_inference_with_claude(
             prompt=prompt,
             image_paths=[str(image_path)],
             model_id=model_id,
@@ -153,7 +153,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "single":
-        response = generate_with_claude(
+        response = single_inference_with_claude(
             prompt=args.prompt,
             image_paths=args.images or None,
             model_id=args.model,
@@ -163,7 +163,7 @@ def main():
         )
         print(response)
     elif args.command == "batch":
-        batch_generate_with_claude(
+        generate_with_claude(
             input_dir=args.input_dir,
             output_dir=args.output_dir,
             prompt=args.prompt,

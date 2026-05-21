@@ -6,7 +6,7 @@ def __getattr__(name):
     if name == "generate_with_claude":
         from .claude_bedrock import generate_with_claude
         return generate_with_claude
-    if name == "batch_generate_with_claude":
-        from .claude_bedrock import batch_generate_with_claude
-        return batch_generate_with_claude
+    if name == "single_inference_with_claude":
+        from .claude_bedrock import single_inference_with_claude
+        return single_inference_with_claude
     raise AttributeError(f"module 'nexus.gen' has no attribute {name!r}")
