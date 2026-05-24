@@ -745,6 +745,10 @@ class PolygonAnnotationWithReference:
         self._update_area_ratios()
 
     def clear_current(self):
+        if self.edit_mode and self.selected_polygon_idx is not None:
+            self._delete_polygon_by_idx(self.selected_polygon_idx)
+            self.deselect_polygon()
+            return
         self.canvas.delete("temp")
         self.current_polygon = []
         self._update_ref_overlays()
@@ -927,6 +931,25 @@ class PolygonAnnotationWithReference:
     def _pan_end(self, event):
         self._pan_start = None
 
+    def _delete_polygon_by_idx(self, delete_idx):
+        """Delete a polygon by index and update labels."""
+        del self.polygons[delete_idx]
+        del self.polygon_items[delete_idx]
+        
+        new_labels = {}
+        for (path, idx), class_idx in self.polygon_labels.items():
+            if path == self.image_path:
+                if idx < delete_idx:
+                    new_labels[(path, idx)] = class_idx
+                elif idx > delete_idx:
+                    new_labels[(path, idx - 1)] = class_idx
+            else:
+                new_labels[(path, idx)] = class_idx
+        self.polygon_labels = new_labels
+        
+        self.save_current_annotations()
+        self.restore_annotations()
+
     def delete_polygon(self, event):
         if not self.edit_mode:
             return
@@ -947,22 +970,7 @@ class PolygonAnnotationWithReference:
                     break
         
         if delete_idx is not None:
-            del self.polygons[delete_idx]
-            del self.polygon_items[delete_idx]
-            
-            new_labels = {}
-            for (path, idx), class_idx in self.polygon_labels.items():
-                if path == self.image_path:
-                    if idx < delete_idx:
-                        new_labels[(path, idx)] = class_idx
-                    elif idx > delete_idx:
-                        new_labels[(path, idx - 1)] = class_idx
-                else:
-                    new_labels[(path, idx)] = class_idx
-            self.polygon_labels = new_labels
-            
-            self.save_current_annotations()
-            self.restore_annotations()
+            self._delete_polygon_by_idx(delete_idx)
     
     def point_in_polygon(self, x, y, polygon):
         n = len(polygon)
