@@ -570,6 +570,20 @@ class PolygonAnnotationWithReference:
                 self.show_vertex_handles()
                 return True
         return False
+
+    def _cycle_polygon_selection(self, x, y):
+        """Cycle to the next overlapping polygon at the click point."""
+        ox, oy = self._display_to_original(x, y)
+        current = self.selected_polygon_idx
+        n = len(self.polygons)
+        for offset in range(1, n + 1):
+            i = (current + offset) % n
+            if self.point_in_polygon(ox, oy, self.polygons[i]):
+                self.selected_polygon_idx = i
+                self.show_vertex_handles()
+                return
+        # No other polygon at this point — deselect
+        self.deselect_polygon()
     
     def show_vertex_handles(self):
         self.canvas.delete("vertex_handle")
@@ -608,7 +622,10 @@ class PolygonAnnotationWithReference:
                 self.selected_vertex_idx = vertex_idx
                 self.canvas.bind("<B1-Motion>", self.drag_vertex)
                 self.canvas.bind("<ButtonRelease-1>", self.release_vertex)
-            elif self.selected_polygon_idx is None:
+            elif self.selected_polygon_idx is not None:
+                # Cycle to next overlapping polygon
+                self._cycle_polygon_selection(x, y)
+            else:
                 # Select polygon
                 self.select_polygon_for_edit(x, y)
             return
