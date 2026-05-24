@@ -270,6 +270,7 @@ class PolygonAnnotationWithReference:
                 self.load_current_image()
             else:
                 messagebox.showwarning("No Images", "No images found in directory")
+            self.root.focus_force()
     
     def load_current_image(self):
         if self.image_files:
@@ -735,7 +736,9 @@ class PolygonAnnotationWithReference:
         if not self.polygons:
             return
         if not messagebox.askyesno("Clear All", "Remove all polygons on this image?"):
+            self.root.focus_force()
             return
+        self.root.focus_force()
         self.deselect_polygon()
         self.polygons = []
         self.polygon_items = []
@@ -753,7 +756,9 @@ class PolygonAnnotationWithReference:
         if not hasattr(self, 'image_path'):
             return
         if not messagebox.askyesno("Revert", "Revert annotations to last saved state?"):
+            self.root.focus_force()
             return
+        self.root.focus_force()
         path = self.image_path
         if path in self._saved_annotations:
             self.all_annotations[path] = copy.deepcopy(self._saved_annotations[path])
@@ -1120,6 +1125,7 @@ class PolygonAnnotationWithReference:
     def _export_bookmarks(self):
         if not self._bookmarks:
             messagebox.showwarning("No Bookmarks", "No images have been bookmarked")
+            self.root.focus_force()
             return
         path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")])
         if path:
@@ -1127,6 +1133,7 @@ class PolygonAnnotationWithReference:
             with open(path, "w") as f:
                 f.write("\n".join(names) + "\n")
             messagebox.showinfo("Exported", f"{len(names)} bookmarked image(s) exported to {path}")
+        self.root.focus_force()
 
     def _update_filter_options(self):
         options = ["All", "Bookmarked", "Unannotated"] + list(self.classes.keys())
@@ -1257,12 +1264,14 @@ class PolygonAnnotationWithReference:
         combo.bind('<Return>', lambda e: on_ok())
         
         dialog.wait_window()
+        self.root.focus_force()
         return result[0]
     
     def manage_classes(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Manage Classes")
         dialog.geometry("400x350")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: (dialog.destroy(), self.root.focus_force()))
         
         tk.Label(dialog, text="Class Index:").grid(row=0, column=0, padx=5, pady=5)
         idx_entry = tk.Entry(dialog)
@@ -1353,6 +1362,7 @@ class PolygonAnnotationWithReference:
     def load_annotations(self):
         if not self.directory:
             messagebox.showwarning("No Directory", "Please load a directory first")
+            self.root.focus_force()
             return
         
         path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
@@ -1432,6 +1442,7 @@ class PolygonAnnotationWithReference:
                     f"{missing_count} annotated image(s) in the annotation file "
                     f"were not found in the image directory and will be skipped.")
             messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
+            self.root.focus_force()
     
     def prompt_project_name(self):
         dialog = tk.Toplevel(self.root)
@@ -1467,6 +1478,7 @@ class PolygonAnnotationWithReference:
         entry.bind('<Return>', lambda e: on_ok())
         
         dialog.wait_window()
+        self.root.focus_force()
         return result[0]
     
     def _build_save_data(self, project_name=""):
@@ -1516,10 +1528,12 @@ class PolygonAnnotationWithReference:
         
         if not self.all_annotations or all(not polys for polys in self.all_annotations.values()):
             messagebox.showwarning("No Annotations", "No polygons to save")
+            self.root.focus_force()
             return
         
         project_name = self.prompt_project_name()
         if not project_name:
+            self.root.focus_force()
             return
         
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
@@ -1531,14 +1545,17 @@ class PolygonAnnotationWithReference:
             if os.path.exists(AUTOSAVE_PATH):
                 os.remove(AUTOSAVE_PATH)
             messagebox.showinfo("Saved", f"Annotations for {len(output['file'])} image(s) saved to {path}")
+        self.root.focus_force()
 
     def generate_masks_dialog(self):
         if not self.directory:
             messagebox.showwarning("No Directory", "Please load a directory first")
+            self.root.focus_force()
             return
         self.save_current_annotations()
         if not self.all_annotations or all(not polys for polys in self.all_annotations.values()):
             messagebox.showwarning("No Annotations", "No polygons to generate masks from")
+            self.root.focus_force()
             return
 
         dialog = tk.Toplevel(self.root)
@@ -1638,6 +1655,7 @@ class PolygonAnnotationWithReference:
                 if os.path.exists(tmp_ann):
                     os.remove(tmp_ann)
             dialog.destroy()
+            self.root.focus_force()
 
         tk.Button(dialog, text="Generate", command=on_generate).grid(
             row=6, column=0, columnspan=3, pady=15)
