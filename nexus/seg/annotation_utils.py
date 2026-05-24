@@ -5,11 +5,14 @@ Fred Zhang <frezz@amazon.com>
 import os
 import json
 import random
+import shutil
 import string
 
 
 def merge_annotations(annotation_files, image_dir, output_path, thresholds=None, merge_strategy="keep_both"):
     """Combine multiple annotation files, keeping only entries whose images exist.
+    Annotations for the same image may exist across different annotation files,
+    in which case, the annotations will be merged based on the given strategy.
 
     Args:
         annotation_files: List of paths to annotation JSON files.
@@ -112,6 +115,89 @@ def merge_annotations(annotation_files, image_dir, output_path, thresholds=None,
         json.dump(output, f, indent=4)
 
     summarise(output_path, image_dir, thresholds=thresholds)
+
+
+def collate_annotations(annotation_files, image_dirs, output_path, output_image_dir):
+    """Collate annotation files with exclusive images into a single file.
+    Then move all images with annotations into one designated directory.
+
+    Unlike :func:`merge_annotations`, this function assumes that the
+    annotation files contain mutually exclusive images (no image appears
+    in more than one file). An error is raised if duplicates are found.
+
+    After producing the collated annotation file, images are copied from
+    the provided directories into *output_image_dir*. Images without
+    annotations are skipped.
+
+    Args:
+        annotation_files: Sequence of paths to annotation JSON files.
+        image_dirs: Sequence of directories containing images.
+        output_path: Path to write the collated annotation JSON file.
+        output_image_dir: Directory to copy annotated images into.
+    """
+    merged_file = {}
+    merged_metadata = {}
+    merged_options = {}
+    project_name = ""
+    next_fid = 1
+    fname_to_fid = {}
+
+    for ann_path in annotation_files:
+        with open(ann_path, "r") as f:
+            data = json.load(f)
+
+        project_name = project_name or data.get("project", {}).get("pname", "")
+        opts = data.get("attribute", {}).get("1", {}).get("options", {})
+        merged_options.update(opts)
+
+        old_file = data.get("file", {})
+        old_meta = data.get("metadata", {})
+
+        old_fid_to_fname = {}
+        for fid, info in old_file.items():
+            fname = info.get("fname", "")
+            if fname in fname_to_fid:
+                raise ValueError(
+                    f"Image '{fname}' appears in multiple annotation files. "
+                    "collate_annotations requires exclusive images across files."
+                )
+            old_fid_to_fname[fid] = fname
+            fname_to_fid[fname] = str(next_fid)
+            merged_file[str(next_fid)] = {"fid": str(next_fid), "fname": fname}
+            next_fid += 1
+
+        for key, meta in old_meta.items():
+            old_fid = meta.get("vid", key.split("_")[0])
+            if old_fid not in old_fid_to_fname:
+                continue
+            new_fid = fname_to_fid[old_fid_to_fname[old_fid]]
+            while True:
+                rand = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                new_key = f"{new_fid}_{rand}"
+                if new_key not in merged_metadata:
+                    break
+            merged_metadata[new_key] = {"vid": new_fid, "xy": meta["xy"], "av": meta.get("av", {})}
+
+    # Keep only files that have polygons
+    fids_with_polygons = {m["vid"] for m in merged_metadata.values()}
+    final_file = {fid: info for fid, info in merged_file.items() if fid in fids_with_polygons}
+
+    output = {
+        "project": {"pname": project_name},
+        "attribute": {"1": {"options": merged_options}},
+        "file": final_file,
+        "metadata": merged_metadata,
+    }
+    with open(output_path, "w") as f:
+        json.dump(output, f, indent=4)
+
+    # Copy annotated images into output directory
+    os.makedirs(output_image_dir, exist_ok=True)
+    annotated_fnames = {info["fname"] for info in final_file.values()}
+    for image_dir in image_dirs:
+        for fname in os.listdir(image_dir):
+            if fname in annotated_fnames:
+                shutil.copy2(os.path.join(image_dir, fname), os.path.join(output_image_dir, fname))
 
 
 def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=None):
