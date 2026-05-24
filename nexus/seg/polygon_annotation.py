@@ -570,6 +570,20 @@ class PolygonAnnotationWithReference:
                 self.show_vertex_handles()
                 return True
         return False
+
+    def _cycle_polygon_selection(self, x, y):
+        """Cycle to the next overlapping polygon at the click point."""
+        ox, oy = self._display_to_original(x, y)
+        current = self.selected_polygon_idx
+        n = len(self.polygons)
+        for offset in range(1, n + 1):
+            i = (current + offset) % n
+            if self.point_in_polygon(ox, oy, self.polygons[i]):
+                self.selected_polygon_idx = i
+                self.show_vertex_handles()
+                return
+        # No other polygon at this point — deselect
+        self.deselect_polygon()
     
     def show_vertex_handles(self):
         self.canvas.delete("vertex_handle")
@@ -608,7 +622,10 @@ class PolygonAnnotationWithReference:
                 self.selected_vertex_idx = vertex_idx
                 self.canvas.bind("<B1-Motion>", self.drag_vertex)
                 self.canvas.bind("<ButtonRelease-1>", self.release_vertex)
-            elif self.selected_polygon_idx is None:
+            elif self.selected_polygon_idx is not None:
+                # Cycle to next overlapping polygon
+                self._cycle_polygon_selection(x, y)
+            else:
                 # Select polygon
                 self.select_polygon_for_edit(x, y)
             return
@@ -728,6 +745,10 @@ class PolygonAnnotationWithReference:
         self._update_area_ratios()
 
     def clear_current(self):
+        if self.edit_mode and self.selected_polygon_idx is not None:
+            self._delete_polygon_by_idx(self.selected_polygon_idx)
+            self.deselect_polygon()
+            return
         self.canvas.delete("temp")
         self.current_polygon = []
         self._update_ref_overlays()
@@ -910,6 +931,25 @@ class PolygonAnnotationWithReference:
     def _pan_end(self, event):
         self._pan_start = None
 
+    def _delete_polygon_by_idx(self, delete_idx):
+        """Delete a polygon by index and update labels."""
+        del self.polygons[delete_idx]
+        del self.polygon_items[delete_idx]
+        
+        new_labels = {}
+        for (path, idx), class_idx in self.polygon_labels.items():
+            if path == self.image_path:
+                if idx < delete_idx:
+                    new_labels[(path, idx)] = class_idx
+                elif idx > delete_idx:
+                    new_labels[(path, idx - 1)] = class_idx
+            else:
+                new_labels[(path, idx)] = class_idx
+        self.polygon_labels = new_labels
+        
+        self.save_current_annotations()
+        self.restore_annotations()
+
     def delete_polygon(self, event):
         if not self.edit_mode:
             return
@@ -930,22 +970,7 @@ class PolygonAnnotationWithReference:
                     break
         
         if delete_idx is not None:
-            del self.polygons[delete_idx]
-            del self.polygon_items[delete_idx]
-            
-            new_labels = {}
-            for (path, idx), class_idx in self.polygon_labels.items():
-                if path == self.image_path:
-                    if idx < delete_idx:
-                        new_labels[(path, idx)] = class_idx
-                    elif idx > delete_idx:
-                        new_labels[(path, idx - 1)] = class_idx
-                else:
-                    new_labels[(path, idx)] = class_idx
-            self.polygon_labels = new_labels
-            
-            self.save_current_annotations()
-            self.restore_annotations()
+            self._delete_polygon_by_idx(delete_idx)
     
     def point_in_polygon(self, x, y, polygon):
         n = len(polygon)
