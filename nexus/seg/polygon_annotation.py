@@ -157,6 +157,7 @@ class PolygonAnnotationWithReference:
         self.show_original_btn = tk.Button(control_frame, text="Show Original [T]", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Mark as Clean", command=self._mark_unannotated_clean).pack(side=tk.LEFT)
         self._show_ref_annotations = tk.BooleanVar(value=False)
         tk.Checkbutton(control_frame, text="Display annotations on ref.", variable=self._show_ref_annotations,
                        command=self._on_ref_annotations_toggle).pack(side=tk.LEFT)
@@ -743,6 +744,38 @@ class PolygonAnnotationWithReference:
         self.polygon_items.append([line_id, poly_id])
         self._update_ref_overlays()
         self._update_area_ratios()
+
+    def _mark_unannotated_clean(self):
+        """Mark all unannotated images as clean with a triangle annotation."""
+        if self._clean_class is None:
+            messagebox.showerror("No Clean Class", "Clean class index is not set. Configure it in Manage Classes.")
+            self.root.focus_force()
+            return
+        self.save_current_annotations()
+        unannotated = [p for p in self.image_files if not self.all_annotations.get(p)]
+        if not unannotated:
+            messagebox.showinfo("No Unannotated", "All images already have annotations.")
+            self.root.focus_force()
+            return
+        if not messagebox.askyesno("Mark as Clean",
+                f"Mark {len(unannotated)} unannotated image(s) as clean?"):
+            self.root.focus_force()
+            return
+        for img_path in unannotated:
+            img = Image.open(img_path)
+            cx, cy = img.width / 2, img.height / 2
+            size = min(img.width, img.height) * 0.05
+            triangle = [
+                (cx, cy - size),
+                (cx - size, cy + size),
+                (cx + size, cy + size),
+            ]
+            poly_idx = len(self.all_annotations.get(img_path, []))
+            self.all_annotations[img_path] = [triangle]
+            self.polygon_labels[(img_path, 0)] = self._clean_class
+        self.restore_annotations()
+        messagebox.showinfo("Done", f"{len(unannotated)} image(s) marked as clean.")
+        self.root.focus_force()
 
     def clear_current(self):
         if self.edit_mode and self.selected_polygon_idx is not None:
