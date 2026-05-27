@@ -120,6 +120,7 @@ class PolygonAnnotationWithReference:
                                               command=self._toggle_bookmark)
         self._bookmark_check.pack(side=tk.LEFT, padx=5)
         tk.Button(self.top_frame, text="Export Bookmarks", command=self._export_bookmarks).pack(side=tk.LEFT)
+        tk.Button(self.top_frame, text="Import Bookmarks", command=self._import_bookmarks).pack(side=tk.LEFT)
         
         self._scroll_frame = tk.Frame(root)
         self._scroll_frame.pack(fill=tk.BOTH, expand=True)
@@ -1193,6 +1194,27 @@ class PolygonAnnotationWithReference:
             messagebox.showinfo("Exported", f"{len(names)} bookmarked image(s) exported to {path}")
         self.root.focus_force()
 
+    def _import_bookmarks(self):
+        if not self.directory:
+            messagebox.showwarning("No Directory", "Please load a directory first")
+            self.root.focus_force()
+            return
+        path = filedialog.askopenfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")])
+        if path:
+            with open(path, "r") as f:
+                names = [line.strip() for line in f if line.strip()]
+            count = 0
+            for name in names:
+                img_path = os.path.join(self.directory, name)
+                if img_path in self.image_files:
+                    self._bookmarks.add(img_path)
+                    count += 1
+            # Sync checkbox for current image
+            if hasattr(self, 'image_path'):
+                self._bookmark_var.set(self.image_path in self._bookmarks)
+            messagebox.showinfo("Imported", f"{count} bookmark(s) imported ({len(names) - count} not found in directory)")
+        self.root.focus_force()
+
     def _update_filter_options(self):
         options = ["All", "Bookmarked", "Unannotated"] + list(self.classes.keys())
         current = self.filter_dropdown.get()
@@ -1818,7 +1840,7 @@ class PolygonAnnotationWithReference:
         os.remove(AUTOSAVE_PATH)
 
 
-def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
+def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
     """Launch the polygon annotation tool.
 
     Args:
