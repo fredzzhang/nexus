@@ -120,6 +120,7 @@ class PolygonAnnotationWithReference:
                                               command=self._toggle_bookmark)
         self._bookmark_check.pack(side=tk.LEFT, padx=5)
         tk.Button(self.top_frame, text="Export Bookmarks", command=self._export_bookmarks).pack(side=tk.LEFT)
+        tk.Button(self.top_frame, text="Import Bookmarks", command=self._import_bookmarks).pack(side=tk.LEFT)
         
         self._scroll_frame = tk.Frame(root)
         self._scroll_frame.pack(fill=tk.BOTH, expand=True)
@@ -157,6 +158,7 @@ class PolygonAnnotationWithReference:
         self.show_original_btn = tk.Button(control_frame, text="Show Original [T]", command=self.toggle_show_original)
         self.show_original_btn.pack(side=tk.LEFT)
         tk.Button(control_frame, text="Generate Masks", command=self.generate_masks_dialog).pack(side=tk.LEFT)
+        tk.Button(control_frame, text="Mark as Clean", command=self._mark_unannotated_clean).pack(side=tk.LEFT)
         self._show_ref_annotations = tk.BooleanVar(value=False)
         tk.Checkbutton(control_frame, text="Display annotations on ref.", variable=self._show_ref_annotations,
                        command=self._on_ref_annotations_toggle).pack(side=tk.LEFT)
@@ -744,6 +746,38 @@ class PolygonAnnotationWithReference:
         self._update_ref_overlays()
         self._update_area_ratios()
 
+    def _mark_unannotated_clean(self):
+        """Mark all unannotated images as clean with a triangle annotation."""
+        if self._clean_class is None:
+            messagebox.showerror("No Clean Class", "Clean class index is not set. Configure it in Manage Classes.")
+            self.root.focus_force()
+            return
+        self.save_current_annotations()
+        unannotated = [p for p in self.image_files if not self.all_annotations.get(p)]
+        if not unannotated:
+            messagebox.showinfo("No Unannotated", "All images already have annotations.")
+            self.root.focus_force()
+            return
+        if not messagebox.askyesno("Mark as Clean",
+                f"Mark {len(unannotated)} unannotated image(s) as clean?"):
+            self.root.focus_force()
+            return
+        for img_path in unannotated:
+            img = Image.open(img_path)
+            cx, cy = img.width / 2, img.height / 2
+            size = min(img.width, img.height) * 0.05
+            triangle = [
+                (cx, cy - size),
+                (cx - size, cy + size),
+                (cx + size, cy + size),
+            ]
+            poly_idx = len(self.all_annotations.get(img_path, []))
+            self.all_annotations[img_path] = [triangle]
+            self.polygon_labels[(img_path, 0)] = self._clean_class
+        self.restore_annotations()
+        messagebox.showinfo("Done", f"{len(unannotated)} image(s) marked as clean.")
+        self.root.focus_force()
+
     def clear_current(self):
         if self.edit_mode and self.selected_polygon_idx is not None:
             self._delete_polygon_by_idx(self.selected_polygon_idx)
@@ -1158,6 +1192,27 @@ class PolygonAnnotationWithReference:
             with open(path, "w") as f:
                 f.write("\n".join(names) + "\n")
             messagebox.showinfo("Exported", f"{len(names)} bookmarked image(s) exported to {path}")
+        self.root.focus_force()
+
+    def _import_bookmarks(self):
+        if not self.directory:
+            messagebox.showwarning("No Directory", "Please load a directory first")
+            self.root.focus_force()
+            return
+        path = filedialog.askopenfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")])
+        if path:
+            with open(path, "r") as f:
+                names = [line.strip() for line in f if line.strip()]
+            count = 0
+            for name in names:
+                img_path = os.path.join(self.directory, name)
+                if img_path in self.image_files:
+                    self._bookmarks.add(img_path)
+                    count += 1
+            # Sync checkbox for current image
+            if hasattr(self, 'image_path'):
+                self._bookmark_var.set(self.image_path in self._bookmarks)
+            messagebox.showinfo("Imported", f"{count} bookmark(s) imported ({len(names) - count} not found in directory)")
         self.root.focus_force()
 
     def _update_filter_options(self):
@@ -1785,7 +1840,7 @@ class PolygonAnnotationWithReference:
         os.remove(AUTOSAVE_PATH)
 
 
-def polygon_annotation_with_reference(res="1600x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
+def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
     """Launch the polygon annotation tool.
 
     Args:
