@@ -35,8 +35,9 @@ def summarise(annotation_path, image_dir, thresholds=None):
     """Print per-class image counts and average defect area ratios.
 
     Args:
-        annotation_path: Path to the annotation JSON file.
-        image_dir: Directory containing source images.
+        annotation_path: Path or list of paths to annotation JSON file(s).
+        image_dir: Directory or list of directories containing source images.
+            Must match annotation_path in length when both are lists.
         thresholds: Dict mapping class ID strings to minimum area ratio
             thresholds (between 0 and 1). The keys define which classes
             to report on. Annotations whose per-image area ratio falls
@@ -46,29 +47,39 @@ def summarise(annotation_path, image_dir, thresholds=None):
     if thresholds is None:
         thresholds = DEFAULT_THRESHOLDS
 
+    if isinstance(annotation_path, str):
+        annotation_path = [annotation_path]
+    if isinstance(image_dir, str):
+        image_dir = [image_dir]
+    assert len(annotation_path) == len(image_dir), \
+        "annotation_path and image_dir must have the same length"
+
     class_filter = {cid: 0 for cid in thresholds}
-    fid_to_fname, file_annotations, annotated_fids = load_annotations(annotation_path, class_filter)
-    class_names = _load_class_names(annotation_path)
-
-    # Cache image sizes
+    class_names = {}
     fid_to_size = {}
-    for fid in annotated_fids:
-        fname = fid_to_fname.get(fid)
-        if fname:
-            size = _get_image_size(image_dir, fname)
-            if size:
-                fid_to_size[fid] = size
-
-    # Per class: collect area ratio per image
     class_image_ratios = defaultdict(lambda: defaultdict(float))
     fids_with_defects = set()
-    for fid, annots in file_annotations.items():
-        if fid not in fid_to_size:
-            continue
-        for class_id, pts in annots:
-            area = cv2.contourArea(pts.astype(np.float32))
-            class_image_ratios[class_id][fid] += area / fid_to_size[fid]
-            fids_with_defects.add(fid)
+    annotated_fids = set()
+
+    for ann_path, img_dir in zip(annotation_path, image_dir):
+        fid_to_fname, file_annotations, ann_fids = load_annotations(ann_path, class_filter)
+        class_names.update(_load_class_names(ann_path))
+        annotated_fids.update(ann_fids)
+
+        for fid in ann_fids:
+            fname = fid_to_fname.get(fid)
+            if fname:
+                size = _get_image_size(img_dir, fname)
+                if size:
+                    fid_to_size[fid] = size
+
+        for fid, annots in file_annotations.items():
+            if fid not in fid_to_size:
+                continue
+            for class_id, pts in annots:
+                area = cv2.contourArea(pts.astype(np.float32))
+                class_image_ratios[class_id][fid] += area / fid_to_size[fid]
+                fids_with_defects.add(fid)
 
     bg_count = len(annotated_fids - fids_with_defects)
 
@@ -101,8 +112,9 @@ def summarise(annotation_path, image_dir, thresholds=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="summarise annotation statistics")
-    parser.add_argument("annotation", help="Path to annotation JSON file")
-    parser.add_argument("image_dir", help="Directory containing source images")
+    parser.add_argument("annotation", nargs="+", help="Path(s) to annotation JSON file(s)")
+    parser.add_argument("--image-dir", "-d", nargs="+", required=True,
+                        help="Directory/directories containing source images")
     parser.add_argument("-t", "--thresholds", default=None,
                         help='Class IDs and min area ratio (0-1) as JSON, '
                              'e.g. \'{"401": 0.005, "402": 0.01, "403": 0.002}\'')
