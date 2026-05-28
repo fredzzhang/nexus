@@ -4,6 +4,7 @@ Fred Zhang <frezz@amazon.com>
 """
 
 import os
+import random
 import argparse
 import requests
 import fal_client
@@ -42,6 +43,7 @@ def generate_with_nano_banana(
     fal_key_path: str | None = None,
     reference_images: list[str] | None = None,
     resolution: str = "0.5K",
+    sample: int | None = None,
     workers: int = 4,
 ):
     """Batch-edit images using the fal.ai Nano Banana 2 model.
@@ -55,6 +57,8 @@ def generate_with_nano_banana(
         reference_images: Optional list of reference image paths included
             with every request.
         resolution: Output resolution. One of "0.5K", "1K", "2K", "4K".
+        sample: If specified, randomly sample this many images from the
+            input directory. Defaults to None (use all images).
         workers: Number of parallel requests.
     """
     if fal_key_path:
@@ -69,6 +73,9 @@ def generate_with_nano_banana(
     if not images:
         print(f"No images found in {input_dir}")
         return
+
+    if sample is not None:
+        images = random.sample(images, min(sample, len(images)))
 
     ref_urls = [fal_client.upload_file(Path(p)) for p in (reference_images or [])]
     if ref_urls:
@@ -93,6 +100,7 @@ def main():
     parser.add_argument("--reference-images", nargs="*", default=[], help="Reference image paths included with every request")
     parser.add_argument("--resolution", default="0.5K", choices=["0.5K", "1K", "2K", "4K"], help="Output resolution")
     parser.add_argument("--fal-key-path", default=None, help="Path to file containing fal.ai API key")
+    parser.add_argument("--sample", type=int, default=None, help="Randomly sample this many images from input directory")
     parser.add_argument("--workers", type=int, default=4, help="Number of parallel requests")
     args = parser.parse_args()
 
@@ -103,6 +111,7 @@ def main():
         fal_key_path=args.fal_key_path,
         reference_images=args.reference_images,
         resolution=args.resolution,
+        sample=args.sample,
         workers=args.workers,
     )
 
