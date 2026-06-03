@@ -1,5 +1,5 @@
 from .polygon_annotation import polygon_annotation_with_reference
-from .annotation_utils import merge_annotations, collate_annotations, remap_classes
+from .annotation_utils import merge_annotations, collate_annotations, remap_classes, add_suffix
 from .generate_masks import load_annotations, generate_masks
 from .visualise_masks import visualise_one, visualise_directory
 from .triplet_browser import segmentation_diagnosis

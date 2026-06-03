@@ -200,6 +200,41 @@ def collate_annotations(annotation_files, image_dirs, output_path, output_image_
                 shutil.copy2(os.path.join(image_dir, fname), os.path.join(output_image_dir, fname))
 
 
+def add_suffix(annotation_path, image_dir, suffix, output_annotation_path=None):
+    """Add a suffix to all image filenames in an annotation file and rename them on disk.
+
+    Inserts *suffix* before the file extension for every image entry in the
+    annotation JSON, then renames the corresponding files in *image_dir*.
+    Use this to disambiguate identically-named images across datasets before
+    calling :func:`collate_annotations`.
+
+    Args:
+        annotation_path: Path to the annotation JSON file.
+        image_dir: Directory containing the images to rename.
+        suffix: String to insert before the extension (e.g. ``'_mould'``).
+        output_annotation_path: Path to write the updated JSON. Overwrites
+            *annotation_path* in place when not provided.
+    """
+    with open(annotation_path, "r") as f:
+        data = json.load(f)
+
+    for info in data.get("file", {}).values():
+        old_fname = info.get("fname", "")
+        if not old_fname:
+            continue
+        name, ext = os.path.splitext(old_fname)
+        new_fname = f"{name}{suffix}{ext}"
+        old_path = os.path.join(image_dir, old_fname)
+        new_path = os.path.join(image_dir, new_fname)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        info["fname"] = new_fname
+
+    out_path = output_annotation_path or annotation_path
+    with open(out_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+
 def remap_classes(annotation_path, output_path, class_mapping, drop_unmapped=None):
     """Remap class indices and names in an annotation file.
 
