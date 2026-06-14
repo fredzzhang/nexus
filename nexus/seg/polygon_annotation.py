@@ -87,13 +87,19 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None, ref_dir=None):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
         self._asin = asin
         self._name_format = name_format
         self._clean_class = clean_class
+        if ref_dir is None:
+            self._ref_dirs = None
+        elif isinstance(ref_dir, str):
+            self._ref_dirs = [ref_dir]
+        else:
+            self._ref_dirs = list(ref_dir)
         
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -376,12 +382,23 @@ class PolygonAnnotationWithReference:
         ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
         stem = self._extract_stem(basename, ann_prefix, ann_suffix)
 
-        for pattern in ref_patterns:
+        for i, pattern in enumerate(ref_patterns):
             ref_prefix, ref_suffix = self._parse_pattern(pattern)
             ref_name = ref_prefix + stem + ref_suffix
-            ref_path = os.path.join(self.directory, ref_name)
+            # Search for reference image in ref_dirs or fall back to self.directory
+            ref_path = None
+            if self._ref_dirs:
+                for d in self._ref_dirs:
+                    candidate = os.path.join(d, ref_name)
+                    if os.path.exists(candidate):
+                        ref_path = candidate
+                        break
+            if ref_path is None:
+                candidate = os.path.join(self.directory, ref_name)
+                if os.path.exists(candidate):
+                    ref_path = candidate
 
-            if os.path.exists(ref_path):
+            if ref_path:
                 self._ref_images.append(Image.open(ref_path))
             else:
                 self._ref_images.append(None)
@@ -1855,7 +1872,7 @@ class PolygonAnnotationWithReference:
         os.remove(AUTOSAVE_PATH)
 
 
-def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None):
+def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None, ref_dir=None):
     """Launch the polygon annotation tool.
 
     Args:
@@ -1881,10 +1898,15 @@ def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin=
         annotation_file: Optional path to annotation JSON file. If provided
             (along with image_dir), annotations are loaded automatically at
             startup.
+        ref_dir: Optional directory or list of directories to search for
+            reference images. If None, reference images are looked up in
+            image_dir only. If a string or list of strings, each directory
+            is searched in order for each reference image until found,
+            falling back to image_dir.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class, image_dir=image_dir, annotation_file=annotation_file)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class, image_dir=image_dir, annotation_file=annotation_file, ref_dir=ref_dir)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
