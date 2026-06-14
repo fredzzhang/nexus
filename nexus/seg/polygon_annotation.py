@@ -87,13 +87,19 @@ class PolygonAnnotationWithReference:
         - Prev/Next Ref buttons: Scroll through reference images.
     """
 
-    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
+    def __init__(self, root, custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None, ref_dir=None):
         self.root = root
         self.root.title("Polygon Annotation Tool")
         self._custom_classes = custom_classes
         self._asin = asin
         self._name_format = name_format
         self._clean_class = clean_class
+        if ref_dir is None:
+            self._ref_dirs = None
+        elif isinstance(ref_dir, str):
+            self._ref_dirs = [ref_dir]
+        else:
+            self._ref_dirs = list(ref_dir)
         
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -230,6 +236,12 @@ class PolygonAnnotationWithReference:
         self.load_base_classes()
         self._check_autosave()
         self._schedule_autosave()
+        
+        # Auto-load directory and annotation file if provided
+        if image_dir:
+            self._load_directory(image_dir)
+        if annotation_file and self.directory:
+            self._load_annotation_file(annotation_file)
     
     def _color_for_class(self, class_idx):
         """Return a stable, distinct color for a class index using Glasbey palette."""
@@ -252,27 +264,30 @@ class PolygonAnnotationWithReference:
     def load_directory(self):
         directory = filedialog.askdirectory(initialdir=os.path.dirname(os.path.abspath(sys.argv[0])))
         if directory:
-            self.directory = directory
-            all_files = sorted(f for f in os.listdir(directory)
-                               if f.lower().endswith(('.png', '.jpg', '.jpeg')))
-            if self._name_format:
-                ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
-                self.image_files = [os.path.join(directory, f) for f in all_files
-                                    if self._match_pattern(f, ann_prefix, ann_suffix)]
-            else:
-                self.image_files = [os.path.join(directory, f) for f in all_files]
-            self.image_files.sort()
-            if self.image_files:
-                self._filtered_files = None
-                self.filter_dropdown.set("All")
-                filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
-                self.file_dropdown['values'] = filenames
-                self.all_annotations = {}
-                self.current_index = 0
-                self.load_current_image()
-            else:
-                messagebox.showwarning("No Images", "No images found in directory")
+            self._load_directory(directory)
             self.root.focus_force()
+
+    def _load_directory(self, directory):
+        self.directory = directory
+        all_files = sorted(f for f in os.listdir(directory)
+                           if f.lower().endswith(('.png', '.jpg', '.jpeg')))
+        if self._name_format:
+            ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
+            self.image_files = [os.path.join(directory, f) for f in all_files
+                                if self._match_pattern(f, ann_prefix, ann_suffix)]
+        else:
+            self.image_files = [os.path.join(directory, f) for f in all_files]
+        self.image_files.sort()
+        if self.image_files:
+            self._filtered_files = None
+            self.filter_dropdown.set("All")
+            filenames = [f"[{i+1}] {os.path.basename(f)}" for i, f in enumerate(self.image_files)]
+            self.file_dropdown['values'] = filenames
+            self.all_annotations = {}
+            self.current_index = 0
+            self.load_current_image()
+        else:
+            messagebox.showwarning("No Images", "No images found in directory")
     
     def load_current_image(self):
         if self.image_files:
@@ -367,12 +382,23 @@ class PolygonAnnotationWithReference:
         ann_prefix, ann_suffix = self._parse_pattern(self._name_format[0])
         stem = self._extract_stem(basename, ann_prefix, ann_suffix)
 
-        for pattern in ref_patterns:
+        for i, pattern in enumerate(ref_patterns):
             ref_prefix, ref_suffix = self._parse_pattern(pattern)
             ref_name = ref_prefix + stem + ref_suffix
-            ref_path = os.path.join(self.directory, ref_name)
+            # Search for reference image in ref_dirs or fall back to self.directory
+            ref_path = None
+            if self._ref_dirs:
+                for d in self._ref_dirs:
+                    candidate = os.path.join(d, ref_name)
+                    if os.path.exists(candidate):
+                        ref_path = candidate
+                        break
+            if ref_path is None:
+                candidate = os.path.join(self.directory, ref_name)
+                if os.path.exists(candidate):
+                    ref_path = candidate
 
-            if os.path.exists(ref_path):
+            if ref_path:
                 self._ref_images.append(Image.open(ref_path))
             else:
                 self._ref_images.append(None)
@@ -1447,82 +1473,88 @@ class PolygonAnnotationWithReference:
         
         path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
         if path:
-            self._loaded_annotation_path = path
-            with open(path, "r") as f:
-                data = json.load(f)
+            self._load_annotation_file(path)
+            self.root.focus_force()
+
+    def _load_annotation_file(self, path):
+        self._loaded_annotation_path = path
+        with open(path, "r") as f:
+            data = json.load(f)
+        
+        file_dict = data.get("file", {})
+        metadata_dict = data.get("metadata", {})
+        attribute_dict = data.get("attribute", {})
+        
+        if "1" in attribute_dict and "options" in attribute_dict["1"]:
+            all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
             
-            file_dict = data.get("file", {})
-            metadata_dict = data.get("metadata", {})
-            attribute_dict = data.get("attribute", {})
-            
-            if "1" in attribute_dict and "options" in attribute_dict["1"]:
-                all_classes = {v: k for k, v in attribute_dict["1"]["options"].items()}
-                
+            if self._asin:
+                asin_lower = self._asin.lower()
+                self.classes = {name: idx for name, idx in all_classes.items()
+                               if name.lower().startswith(asin_lower + " - ")}
+            else:
                 # Prompt for produce name to filter classes
                 produce_name = self.prompt_produce_name(all_classes)
                 if produce_name:
                     produce_lower = produce_name.lower()
-                    self.classes = {name: idx for name, idx in all_classes.items() 
+                    self.classes = {name: idx for name, idx in all_classes.items()
                                    if name.lower().startswith(produce_lower + " - ")}
                 else:
                     self.classes = all_classes
+            
+            self.update_class_buttons()
+        
+        self.root.update_idletasks()
+        
+        loaded_annotations = {}
+        self.polygon_labels = {}
+        missing_count = 0
+        
+        for file_id, file_info in file_dict.items():
+            fname = file_info["fname"]
+            img_path = os.path.join(self.directory, fname)
+            
+            if os.path.exists(img_path):
+                polygons = []
+                poly_idx = 0
                 
-                self.update_class_buttons()
-            
-            self.root.update_idletasks()
-            frame_width = self.canvas_frame.winfo_width()
-            frame_height = self.canvas_frame.winfo_height()
-            
-            loaded_annotations = {}
-            self.polygon_labels = {}
-            missing_count = 0
-            
-            for file_id, file_info in file_dict.items():
-                fname = file_info["fname"]
-                img_path = os.path.join(self.directory, fname)
+                for key, poly_data in metadata_dict.items():
+                    if key.startswith(f"{file_id}_"):
+                        coords = poly_data["xy"]
+                        polygon = []
+                        # Store in original image coordinates
+                        for i in range(1, len(coords), 2):
+                            x = coords[i]
+                            y = coords[i+1]
+                            polygon.append((x, y))
+                        polygons.append(polygon)
+                        
+                        if "av" in poly_data and "1" in poly_data["av"]:
+                            class_idx = poly_data["av"]["1"]
+                            poly_key = (img_path, poly_idx)
+                            self.polygon_labels[poly_key] = class_idx
+                        
+                        poly_idx += 1
                 
-                if os.path.exists(img_path):
-                    polygons = []
-                    poly_idx = 0
-                    
-                    for key, poly_data in metadata_dict.items():
-                        if key.startswith(f"{file_id}_"):
-                            coords = poly_data["xy"]
-                            polygon = []
-                            # Store in original image coordinates
-                            for i in range(1, len(coords), 2):
-                                x = coords[i]
-                                y = coords[i+1]
-                                polygon.append((x, y))
-                            polygons.append(polygon)
-                            
-                            if "av" in poly_data and "1" in poly_data["av"]:
-                                class_idx = poly_data["av"]["1"]
-                                poly_key = (img_path, poly_idx)
-                                self.polygon_labels[poly_key] = class_idx
-                            
-                            poly_idx += 1
-                    
-                    loaded_annotations[img_path] = polygons
-                else:
-                    # Check if this file has any annotations
-                    for key in metadata_dict:
-                        if key.startswith(f"{file_id}_"):
-                            missing_count += 1
-                            break
-            
-            self.all_annotations = loaded_annotations
-            self._saved_annotations = copy.deepcopy(loaded_annotations)
-            self._saved_labels = copy.deepcopy(self.polygon_labels)
-            self.loaded_data = data
-            self.restore_annotations()
-            if missing_count > 0:
-                messagebox.showwarning(
-                    "Missing Images",
-                    f"{missing_count} annotated image(s) in the annotation file "
-                    f"were not found in the image directory and will be skipped.")
-            messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
-            self.root.focus_force()
+                loaded_annotations[img_path] = polygons
+            else:
+                # Check if this file has any annotations
+                for key in metadata_dict:
+                    if key.startswith(f"{file_id}_"):
+                        missing_count += 1
+                        break
+        
+        self.all_annotations = loaded_annotations
+        self._saved_annotations = copy.deepcopy(loaded_annotations)
+        self._saved_labels = copy.deepcopy(self.polygon_labels)
+        self.loaded_data = data
+        self.restore_annotations()
+        if missing_count > 0:
+            messagebox.showwarning(
+                "Missing Images",
+                f"{missing_count} annotated image(s) in the annotation file "
+                f"were not found in the image directory and will be skipped.")
+        messagebox.showinfo("Loaded", f"Annotations for {len(self.all_annotations)} image(s) loaded")
     
     def prompt_project_name(self):
         dialog = tk.Toplevel(self.root)
@@ -1840,11 +1872,11 @@ class PolygonAnnotationWithReference:
         os.remove(AUTOSAVE_PATH)
 
 
-def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None):
+def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin="strawberry", name_format=None, autosave_interval=5, display_height=500, clean_class=None, image_dir=None, annotation_file=None, ref_dir=None):
     """Launch the polygon annotation tool.
 
     Args:
-        res: Window geometry string (default "1600x700").
+        res: Window geometry string (default "1800x700").
         custom_classes: Optional dict mapping class index strings to class names
             (e.g. {"500": "Blueberry - Decay"}). Must not collide with BASE_DATA.
         asin: Product name to filter classes at startup. If None, prompts the user.
@@ -1861,10 +1893,20 @@ def polygon_annotation_with_reference(res="1800x700", custom_classes=None, asin=
         clean_class: Optional class index string for the "clean" annotation.
             When set, pressing 'A' adds a small triangle at the image centre
             with this class. Useful to mark images as reviewed without defects.
+        image_dir: Optional path to image directory. If provided, the directory
+            is loaded automatically at startup.
+        annotation_file: Optional path to annotation JSON file. If provided
+            (along with image_dir), annotations are loaded automatically at
+            startup.
+        ref_dir: Optional directory or list of directories to search for
+            reference images. If None, reference images are looked up in
+            image_dir only. If a string or list of strings, each directory
+            is searched in order for each reference image until found,
+            falling back to image_dir.
     """
     root = tk.Tk()
     root.geometry(res)
-    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class)
+    app = PolygonAnnotationWithReference(root, custom_classes=custom_classes, asin=asin, name_format=name_format, autosave_interval=autosave_interval, display_height=display_height, clean_class=clean_class, image_dir=image_dir, annotation_file=annotation_file, ref_dir=ref_dir)
     def on_close():
         if app._autosave_id is not None:
             root.after_cancel(app._autosave_id)
