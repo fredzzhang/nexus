@@ -1509,11 +1509,14 @@ class PolygonAnnotationWithReference:
         loaded_annotations = {}
         self.polygon_labels = {}
         missing_count = 0
+        image_file_set = set(self.image_files)
         
         for file_id, file_info in file_dict.items():
             fname = file_info["fname"]
             img_path = os.path.join(self.directory, fname)
             
+            if img_path not in image_file_set:
+                continue
             if os.path.exists(img_path):
                 polygons = []
                 poly_idx = 0
