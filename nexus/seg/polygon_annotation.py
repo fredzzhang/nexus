@@ -1707,7 +1707,7 @@ class PolygonAnnotationWithReference:
 
         pixel_entries = {}
         empty_vars = {}
-        for i, (name, idx) in enumerate(sorted(self.classes.items()), start=1):
+        for i, (name, idx) in enumerate(sorted(self.classes.items(), key=lambda x: int(x[1])), start=1):
             tk.Label(mapping_frame, text=name).grid(row=i, column=0, sticky=tk.W, padx=5)
             tk.Label(mapping_frame, text=idx).grid(row=i, column=1, padx=5)
             pix_var = tk.StringVar(value="")
