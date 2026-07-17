@@ -3,6 +3,7 @@ from .annotation_utils import merge_annotations, collate_annotations, remap_clas
 from .generate_masks import load_annotations, generate_masks
 from .visualise_masks import visualise_one, visualise_directory
 from .triplet_browser import segmentation_diagnosis
+from .manual_evaluation import manual_evaluation
 
 
 def __getattr__(name):
